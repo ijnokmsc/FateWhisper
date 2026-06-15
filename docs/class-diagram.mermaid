@@ -1,0 +1,338 @@
+classDiagram
+    direction TB
+
+    class Plugin {
+        +IDalamudPluginInterface PluginInterface$
+        +IPluginLog Log$
+        +IDataManager DataManager$
+        +ICommandManager CommandManager$
+        +IClientState ClientState$
+        +INetworkMonitor NetworkMonitor$
+        +IFramework Framework$
+        -AuthService _authService
+        -MqttService _mqttService
+        -NetworkInterceptor _networkInterceptor
+        -DataManager _dataManager
+        -NotificationService _notificationService
+        -DutyMonitor _dutyMonitor
+        -PluginConfig _config
+        -MainWindow _mainWindow
+        -WindowSystem _windowSystem
+        -PluginCommands _commands
+        +Plugin() void
+        +Dispose() void
+    }
+
+    class PluginConfig {
+        +int Version
+        +CWHuntConfig CWHunt
+        +CDCHuntConfig CDCHunt
+        +CWFateConfig CWFate
+        +NotificationConfig Notification
+        -IDalamudPluginInterface _pluginInterface
+        +Save() void
+        +Load() void
+    }
+
+    class CWHuntConfig {
+        +bool EnableA
+        +bool EnableB
+        +bool EnableS
+        +bool EnableSS
+        +List~string~ EnabledZones
+    }
+
+    class CDCHuntConfig {
+        +bool EnableA
+        +bool EnableB
+        +bool EnableS
+        +bool EnableSS
+    }
+
+    class CWFateConfig {
+        +bool EnableCommon
+        +bool EnableSpecial
+        +List~string~ EnabledZones
+    }
+
+    class NotificationConfig {
+        +bool ToastEnabled
+        +bool ChatLogEnabled
+        +bool PauseInDuty
+    }
+
+    class AuthService {
+        -IPluginLog _log
+        -string _authUrl
+        +Authenticate(string playerName, int worldId) Task~AuthResult~
+        +ReAuthenticate() Task~AuthResult~
+    }
+
+    class MqttService {
+        -IMqttClient _mqttClient
+        -MqttFactory _mqttFactory
+        -AuthResult _authResult
+        -IPluginLog _log
+        -bool _isConnected
+        +event Action~HuntMessage~ HuntReceived
+        +event Action~FateMessage~ FateReceived
+        +event Action~bool~ ConnectionChanged
+        +ConnectAsync(AuthResult auth) Task
+        +DisconnectAsync() Task
+        +SubscribeTopics(PluginConfig config) Task
+        +PublishHunt(HuntMessage msg) Task
+        +PublishFate(FateMessage msg) Task
+        +Reconnect() Task
+        +Dispose() void
+    }
+
+    class NetworkInterceptor {
+        -IPluginLog _log
+        -INetworkMonitor _networkMonitor
+        -Dictionary~ushort~OpcodeEntry~ _opcodes
+        -DataManager _dataManager
+        +event Action~HuntMessage~ HuntDetected
+        +event Action~FateMessage~ FateDetected
+        +event Action~FateProgressMessage~ FateProgressUpdated
+        +InitZoneDetected uint territoryId
+        +Setup(INetworkMonitor monitor) void
+        +Dispose() void
+    }
+
+    class DataManager {
+        -IPluginLog _log
+        -IDalamudPluginInterface _pluginInterface
+        -string _dataDir
+        -Dictionary~uint~TerritoryInfo~ _territories
+        -Dictionary~uint~WorldInfo~ _worlds
+        -Dictionary~string~HuntMob~ _huntMobs
+        -Dictionary~uint~FateInfo~ _fates
+        -Dictionary~ushort~OpcodeEntry~ _opcodes
+        -List~PatchInfo~ _patches
+        +LoadAll() void
+        +CheckRemoteUpdates() Task~bool~
+        +GetTerritoryName(uint zoneId) string
+        +GetWorldName(int worldId) string
+        +GetHuntMob(string mobId) HuntMob
+        +GetFate(uint fateId) FateInfo
+        +GetOpcode(string packetName) OpcodeEntry
+    }
+
+    class NotificationService {
+        -IPluginLog _log
+        -PluginConfig _config
+        -DataManager _dataManager
+        -DutyMonitor _dutyMonitor
+        +OnHuntBroadcast(HuntMessage msg) void
+        +OnFateBroadcast(FateMessage msg) void
+        +ShowToast(string title, string body) void
+        +PrintChatLog(string text) void
+    }
+
+    class DutyMonitor {
+        -IClientState _clientState
+        -IPluginLog _log
+        -bool _isInDuty
+        +event Action~bool~ DutyStateChanged
+        +bool IsInDuty
+        +Setup(IClientState clientState) void
+    }
+
+    class MainWindow {
+        -Plugin _plugin
+        -PluginConfig _config
+        -MqttService _mqttService
+        -DataManager _dataManager
+        -List~ITab~ _tabs
+        +MainWindow(Plugin plugin, PluginConfig config, MqttService mqtt, DataManager data)
+        +Draw() void
+    }
+
+    class HuntTab {
+        -PluginConfig _config
+        +Draw() void
+    }
+
+    class FateTab {
+        -PluginConfig _config
+        +Draw() void
+    }
+
+    class NotificationTab {
+        -PluginConfig _config
+        +Draw() void
+    }
+
+    class SystemTab {
+        -MqttService _mqttService
+        -DataManager _dataManager
+        -AuthService _authService
+        +Draw() void
+    }
+
+    class AuthResult {
+        +string Token
+        +string MqttUsername
+        +string MqttPassword
+        +string Username
+        +bool IsSuccess
+    }
+
+    class HuntMessage {
+        +string MobId
+        +string MobName
+        +uint ZoneId
+        +float X
+        +float Y
+        +int WorldId
+        +string Rank
+        +long Timestamp
+        +string Datacenter
+    }
+
+    class FateMessage {
+        +uint FateId
+        +string FateName
+        +uint ZoneId
+        +float X
+        +float Y
+        +int WorldId
+        +string Type
+        +long Timestamp
+        +string Datacenter
+    }
+
+    class FateProgressMessage {
+        +uint FateId
+        +int Progress
+        +uint ZoneId
+        +int WorldId
+    }
+
+    class HuntMob {
+        +string Id
+        +string Name
+        +string Rank
+        +uint ZoneId
+        +float DefaultX
+        +float DefaultY
+        +int Level
+        +string Patch
+    }
+
+    class HuntGroup {
+        +string Rank
+        +List~HuntMob~ Mobs
+    }
+
+    class HuntState {
+        +string MobId
+        +HuntStatus Status
+        +long LastKilledTimestamp
+        +int RespawnMinutes
+    }
+
+    class HuntStatus {
+        <<enumeration>>
+        Alive
+        Dead
+        Waiting
+        Unknown
+    }
+
+    class FateInfo {
+        +uint FateId
+        +string Name
+        +string Type
+        +uint ZoneId
+        +float X
+        +float Y
+        +int Level
+        +string Patch
+    }
+
+    class TerritoryInfo {
+        +uint ZoneId
+        +string Name
+        +string Region
+        +string Patch
+    }
+
+    class WorldInfo {
+        +int WorldId
+        +string Name
+        +string Datacenter
+    }
+
+    class PatchInfo {
+        +string PatchId
+        +string Version
+        +string Name
+    }
+
+    class OpcodeEntry {
+        +ushort Opcode
+        +string PacketName
+        +int Length
+    }
+
+    class PluginCommands {
+        -ICommandManager _commandManager
+        -MainWindow _mainWindow
+        -IPluginLog _log
+        +PluginCommands(ICommandManager cmd, MainWindow window, IPluginLog log)
+        +Dispose() void
+    }
+
+    Plugin --> PluginConfig : owns
+    Plugin --> AuthService : owns
+    Plugin --> MqttService : owns
+    Plugin --> NetworkInterceptor : owns
+    Plugin --> DataManager : owns
+    Plugin --> NotificationService : owns
+    Plugin --> DutyMonitor : owns
+    Plugin --> MainWindow : owns
+    Plugin --> PluginCommands : owns
+
+    PluginConfig --> CWHuntConfig : contains
+    PluginConfig --> CDCHuntConfig : contains
+    PluginConfig --> CWFateConfig : contains
+    PluginConfig --> NotificationConfig : contains
+
+    AuthService --> AuthResult : produces
+    MqttService --> AuthResult : consumes
+    MqttService --> HuntMessage : publishes/receives
+    MqttService --> FateMessage : publishes/receives
+
+    NetworkInterceptor --> HuntMessage : produces
+    NetworkInterceptor --> FateMessage : produces
+    NetworkInterceptor --> FateProgressMessage : produces
+    NetworkInterceptor --> DataManager : uses opcodes
+
+    NotificationService --> HuntMessage : consumes
+    NotificationService --> FateMessage : consumes
+    NotificationService --> DataManager : uses lookups
+    NotificationService --> DutyMonitor : checks pause
+    NotificationService --> PluginConfig : checks settings
+
+    DataManager --> TerritoryInfo : loads
+    DataManager --> WorldInfo : loads
+    DataManager --> HuntMob : loads
+    DataManager --> FateInfo : loads
+    DataManager --> PatchInfo : loads
+    DataManager --> OpcodeEntry : loads
+
+    MainWindow --> HuntTab : contains
+    MainWindow --> FateTab : contains
+    MainWindow --> NotificationTab : contains
+    MainWindow --> SystemTab : contains
+
+    HuntTab --> PluginConfig : reads/writes CWHunt
+    FateTab --> PluginConfig : reads/writes CWFate
+    NotificationTab --> PluginConfig : reads/writes Notification
+    SystemTab --> MqttService : queries status
+    SystemTab --> DataManager : queries versions
+    SystemTab --> AuthService : triggers re-auth
+
+    HuntGroup --> HuntMob : aggregates
+    HuntMob --> HuntState : has state

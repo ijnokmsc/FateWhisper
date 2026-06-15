@@ -1,0 +1,32 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.lock.json
+
+# NuGet
+*.nupkg
+**/packages/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.DotSettings
+
+# Build
+*.dll
+*.exe
+*.pdb
+!SilverDasher.Weaver.dll
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+tmp/
+*.tmp
+*.log

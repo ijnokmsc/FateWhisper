@@ -1,0 +1,15 @@
+{
+  "Author": "SilverDasher",
+  "Name": "SilverDasher",
+  "InternalName": "SilverDasher",
+  "AssemblyVersion": "0.1.0.0",
+  "Description": "FF14 跨服猎怪与 FATE 播报插件",
+  "ApplicableVersion": "any",
+  "DalamudApiLevel": 15,
+  "LoadPriority": 0,
+  "Punchline": "跨服猎怪与 FATE 播报",
+  "PunchoutPackage": null,
+  "ImageUrls": [],
+  "IconUrl": null,
+  "Tags": ["hunt", "fate", "broadcast", "cross-world"]
+}
