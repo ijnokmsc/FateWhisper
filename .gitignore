@@ -35,3 +35,9 @@ test_*.py
 bin/
 obj/
 .kunsdd
+
+# Old SilverDasher files (renamed to FateWhisper)
+SilverDasher.csproj
+SilverDasher.json
+*.zip
+release/
