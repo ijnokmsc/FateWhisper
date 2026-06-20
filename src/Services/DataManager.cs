@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -21,7 +21,7 @@ public class DataManager : IDisposable
     private readonly string _dataDir;
     private readonly HttpClient _httpClient;
     private const string RemoteBaseUrl = "https://tree.silverdasher.com/data/";
-    private const string Prefix = "[SilverDasher]";
+    private const string Prefix = "[FateWhisper]";
 
     /// <summary>
     /// 猎怪数据 (hunt.json 或 hunts.json)：mobId → HuntMob。
@@ -126,8 +126,16 @@ public class DataManager : IDisposable
                 .Distinct()
                 .ToHashSet();
 
+            // 构建世界 label → 中文名索引
+            _worldNameByLabel = new Dictionary<string, string>();
+            foreach (var (id, info) in Worlds)
+            {
+                if (!string.IsNullOrEmpty(info.NameLabel) && !string.IsNullOrEmpty(info.Name))
+                    _worldNameByLabel[info.NameLabel] = info.Name;
+            }
+
             _log.Information($"{Prefix} 数据加载完成: Hunts={Hunts.Count}, Fates={Fates.Count}, " +
-                $"Territories={Territories.Count}, Worlds={Worlds.Count}");
+                $"Territories={Territories.Count}, Worlds={Worlds.Count}, WorldLabels={_worldNameByLabel.Count}");
         }
         catch (Exception ex)
         {
@@ -364,12 +372,119 @@ public class DataManager : IDisposable
         return Opcodes.FirstOrDefault(o => o.Name == name);
     }
 
+    // ===== 状态判定系统（对齐 ACT 版 MobStorage/FateStorage） =====
+
+    /// <summary>
+    /// 根据血量百分比获取猎怪状态。
+    /// ACT 版 MobStorage.GetState(health)。
+    /// </summary>
+    public static HuntState GetHuntState(int healthPercent)
+    {
+        return healthPercent switch
+        {
+            100 => HuntState.Healthy,
+            > 95 => HuntState.Taunted,
+            > 0 => HuntState.Dying,
+            _ => HuntState.Died
+        };
+    }
+
+    /// <summary>
+    /// 根据进度获取 FATE 状态。
+    /// ACT 版 FateStorage.GetState(progress)。
+    /// </summary>
+    public static HuntState GetFateState(int progress)
+    {
+        return progress switch
+        {
+            0 => HuntState.Healthy,
+            < 20 => HuntState.Taunted,
+            < 100 => HuntState.Dying,
+            _ => HuntState.Died
+        };
+    }
+
+    /// <summary>
+    /// 获取状态的中文名称。
+    /// ACT 版 MobStorage.GetStateName(state)。
+    /// </summary>
+    public static string GetStateName(HuntState state)
+    {
+        return state switch
+        {
+            HuntState.Healthy => "健康",
+            HuntState.Taunted => "已开怪",
+            HuntState.Dying => "被暴打中",
+            HuntState.Died => "挂了",
+            HuntState.Unknown => "",
+            _ => "不见了"
+        };
+    }
+
     /// <summary>
     /// 释放 HttpClient 资源。
     /// </summary>
     public void Dispose()
     {
         _httpClient.Dispose();
+    }
+
+    // ===== 坐标转换（对齐 ACT 版 Negotiator.ScanMobs） =====
+
+    /// <summary>
+    /// 游戏坐标 → 传输坐标。
+    /// ACT 版公式: x = (gamePos * 0.02 + 21.5) * 100
+    /// 结果以 int 存储，显示时除以 100。
+    /// </summary>
+    public static Coordinate GamePosToTransmissionCoord(float gameX, float gameY)
+    {
+        return new Coordinate
+        {
+            X = (int)((gameX * 0.02f + 21.5f) * 100.0),
+            Y = (int)((gameY * 0.02f + 21.5f) * 100.0)
+        };
+    }
+
+    // ===== 世界 label 反向查找（MQTT Topic 中 worldLabel → 中文名） =====
+
+    /// <summary>
+    /// 世界名称 label → 中文名 索引（如 HongYuHai → 红玉海）。
+    /// 在 LoadAllData 中构建。
+    /// </summary>
+    private Dictionary<string, string> _worldNameByLabel = new();
+
+    /// <summary>
+    /// 通过世界 label（拼音）查找中文名称。
+    /// MQTT Topic 中 worldLabel 是拼音格式（如 HongYuHai）。
+    /// </summary>
+    public string LookupWorldNameByLabel(string label)
+    {
+        if (_worldNameByLabel.TryGetValue(label, out var name))
+            return name;
+        return label;
+    }
+
+    /// <summary>
+    /// 查询猎怪等级（Rank），用于 MQTT 接收时补齐。
+    /// </summary>
+    public string LookupHuntRank(string mobId)
+    {
+        if (Hunts.TryGetValue(mobId, out var mob) && !string.IsNullOrEmpty(mob.Rank))
+            return mob.Rank.ToUpperInvariant();
+        return "";
+    }
+
+    /// <summary>
+    /// 判断 FATE 是否为特殊 FATE（从 spfates.json 查询）。
+    /// </summary>
+    public bool IsFateSpecial(string fateId)
+    {
+        foreach (var group in SpecialFateGroups)
+        {
+            if (group.Items?.Contains(fateId) == true)
+                return true;
+        }
+        return false;
     }
 
     /// <summary>

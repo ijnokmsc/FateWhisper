@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -15,7 +15,7 @@ public class AuthService : IDisposable
 {
     private readonly IPluginLog _log;
     private const string AuthUrl = "https://nest.garlandtools.cn/wake";
-    private const string Prefix = "[SilverDasher]";
+    private const string Prefix = "[FateWhisper]";
 
     /// <summary>
     /// 当前的认证结果。
@@ -50,25 +50,41 @@ public class AuthService : IDisposable
         {
             var name = playerName ?? "";
             var server = serverName ?? "";
-            var version = 393220; // 与 ACT 版一致
+            var version = DataStore.AuthVersion; // 0x60004 = 393220
 
-            // 尝试使用 Tailor 签名（如果 Weaver.dll 可用）
-            var judge = TryGetJudge();
-            var seal = TryGetSeal(name, server);
+            // 纯 C# 实现的 Judge/Seal（不依赖 Weaver.dll）
+            var judge = TailorHelper.Judge();
+            var seal = string.IsNullOrEmpty(name) || string.IsNullOrEmpty(server)
+                ? ""
+                : TailorHelper.Seal(server, name);  // ACT 版顺序: server 在前, name 在后
 
-            // 构造请求体（Weaver.dll 在 Dalamud 不可用，签名留空）
+            var judgePreview = judge.Length <= 20 ? judge : judge[..20];
+            var sealPreview = seal.Length <= 20 ? seal : seal[..20];
+            _log.Information($"{Prefix} Judge={judgePreview} Seal={sealPreview}... #{name} wid={worldId}");
+
+            // 请求体：完整 URL 开头，无 URL 编码 — 与 ACT 版完全一致
+            // ACT 源码: encoding.GetBytes(url + "&i=" + Judge() + "&n=" + name + "&s=" + serverID + "&v=" + Seal(server, name) + "&ve=" + Version)
             var body = $"{AuthUrl}&i={judge}&n={name}&s={worldId}&v={seal}&ve={version}";
             var content = new ByteArrayContent(Encoding.UTF8.GetBytes(body));
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-www-form-urlencoded");
-
-            _log.Information($"{Prefix} 认证 #{name} wid={worldId}");
             using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
             var response = await httpClient.PostAsync(AuthUrl, content);
             var responseBody = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
             {
+                var statusCode = (int)response.StatusCode;
                 _log.Error($"{Prefix} 认证失败: HTTP {response.StatusCode} - {responseBody}");
+
+                // 403 Forbidden — 非网络问题，服务器端拒绝（版本过期/协议变更等）
+                if (statusCode == 403)
+                {
+                    _log.Error($"{Prefix} 认证服务器返回 403，这可能是因为：(1) 版本号 {DataStore.AuthVersion} 已过期，" +
+                        "(2) 认证协议已变更。MQTT 将使用默认凭证运行。");
+                    CurrentAuth = new AuthResult { IsSuccess = false };
+                    return CurrentAuth;
+                }
+
                 CurrentAuth = new AuthResult();
                 return CurrentAuth;
             }
@@ -144,40 +160,6 @@ public class AuthService : IDisposable
     {
         _log.Information($"{Prefix} 正在重新认证...");
         return await AuthenticateAsync(playerName, worldId, serverName);
-    }
-
-    /// <summary>
-    /// 尝试调用 Weaver.dll 获取 Judge 签名（机器指纹）。
-    /// 如果 DLL 不可用，返回空字符串。
-    /// </summary>
-    private static string TryGetJudge()
-    {
-        try
-        {
-            return TailorHelper.Judge();
-        }
-        catch
-        {
-            return "";
-        }
-    }
-
-    /// <summary>
-    /// 尝试调用 Weaver.dll 获取 Seal 签名（玩家签名）。
-    /// 如果 DLL 不可用，返回空字符串。
-    /// </summary>
-    private static string TryGetSeal(string playerName, string serverName)
-    {
-        try
-        {
-            if (string.IsNullOrEmpty(playerName) || string.IsNullOrEmpty(serverName))
-                return "";
-            return TailorHelper.Seal(playerName, serverName);
-        }
-        catch
-        {
-            return "";
-        }
     }
 
     /// <summary>

@@ -1,46 +1,22 @@
-using Newtonsoft.Json;
-
 namespace SilverDasher.Models;
 
 /// <summary>
-/// 猎怪状态模型，用于跟踪猎怪的存活/死亡/冷却状态。
+/// 猎怪/FATE 状态枚举，对齐 ACT 版 SilverDasher。
 /// </summary>
-public class HuntState
+public enum HuntState
 {
-    /// <summary>
-    /// 猎怪 ID。
-    /// </summary>
-    [JsonProperty("mob_id")]
-    public string MobId { get; set; } = "";
+    /// <summary>健康/未被攻击 (HP=100%) / FATE 刚开始</summary>
+    Healthy,
 
-    /// <summary>
-    /// 是否存活。
-    /// </summary>
-    [JsonProperty("is_alive")]
-    public bool IsAlive { get; set; } = true;
+    /// <summary>已被开怪 (HP > 95%) / FATE 进度 < 20%</summary>
+    Taunted,
 
-    /// <summary>
-    /// 上次死亡时间戳（Unix 毫秒）。
-    /// </summary>
-    [JsonProperty("last_kill_time")]
-    public long LastKillTime { get; set; }
+    /// <summary>被暴打中 (HP > 0%) / FATE 进行中</summary>
+    Dying,
 
-    /// <summary>
-    /// 冷却时间（分钟）。
-    /// </summary>
-    [JsonProperty("cooldown_minutes")]
-    public int CooldownMinutes { get; set; } = 120;
+    /// <summary>已死亡或结束</summary>
+    Died,
 
-    /// <summary>
-    /// 上次检测时间戳（Unix 毫秒）。
-    /// </summary>
-    [JsonProperty("last_seen_time")]
-    public long LastSeenTime { get; set; }
-
-    /// <summary>
-    /// 检查冷却是否已过。
-    /// </summary>
-    public bool IsCooldownOver => !IsAlive &&
-        LastKillTime > 0 &&
-        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - LastKillTime > CooldownMinutes * 60 * 1000;
+    /// <summary>未知</summary>
+    Unknown
 }

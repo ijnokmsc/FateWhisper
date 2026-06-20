@@ -3,54 +3,63 @@ using Newtonsoft.Json;
 namespace SilverDasher.Models;
 
 /// <summary>
-/// FATE 播报消息模型，用于 MQTT 传输和本地通知。
+/// FATE 消息模型，对齐 ACT 版 SilverDasher MQTT 协议。
+/// JSON 序列化使用缩写字段名，C# 层面提供兼容性属性。
 /// </summary>
-public class FateMessage
+public class FateMessage : Message
 {
-    [JsonProperty("fate_id")]
-    public string FateId { get; set; } = "";
+    /// <summary>FATE 进度 (0~100)</summary>
+    [JsonProperty("p")]
+    public int Progress { get; set; }
 
-    [JsonProperty("fate_name")]
-    public string FateName { get; set; } = "";
+    /// <summary>剩余时间字符串</summary>
+    [JsonProperty("lt")]
+    public string? LeftTime { get; set; }
 
-    [JsonProperty("world")]
-    public string World { get; set; } = "";
+    // ===== 兼容属性（供 UI/服务层使用） =====
 
-    [JsonProperty("territory")]
-    public string Territory { get; set; } = "";
+    /// <summary>FATE ID（字符串形式）</summary>
+    [JsonIgnore]
+    public string FateId => Id.ToString();
 
-    [JsonProperty("territory_name")]
-    public string TerritoryName { get; set; } = "";
+    /// <summary>区域 ID（字符串形式，兼容旧代码）</summary>
+    [JsonIgnore]
+    public string Territory
+    {
+        get => Map.ToString();
+        set
+        {
+            if (ushort.TryParse(value, out var tid))
+                Map = tid;
+        }
+    }
 
-    [JsonProperty("type")]
-    public string Type { get; set; } = "";
+    /// <summary>FATE 名称（本地存储）</summary>
+    [JsonIgnore]
+    public string? FateName { get; set; }
 
-    [JsonProperty("timestamp")]
-    public long Timestamp { get; set; }
+    /// <summary>FATE 类型: "common" / "special"</summary>
+    [JsonIgnore]
+    public string? Type_ { get; set; }
 
-    [JsonProperty("datacenter")]
-    public string Datacenter { get; set; } = "";
+    /// <summary>大区名称</summary>
+    [JsonIgnore]
+    public string? Datacenter { get; set; }
 
-    [JsonProperty("is_special")]
+    /// <summary>是否为特殊 FATE</summary>
+    [JsonIgnore]
     public bool IsSpecial { get; set; }
 
-    [JsonProperty("event_type")]
-    public string EventType { get; set; } = "start";
-
-    /// <summary>
-    /// 是否为本地检测（非 MQTT 接收）。
-    /// </summary>
+    /// <summary>是否为本地检测（非 MQTT 接收）</summary>
     [JsonIgnore]
     public bool IsLocal { get; set; }
 
-    /// <summary>
-    /// 获取格式化的时间字符串。
-    /// </summary>
-    public string TimeString => DateTimeOffset.FromUnixTimeMilliseconds(Timestamp).ToLocalTime().ToString("HH:mm:ss");
+    /// <summary>事件类型: "start" / "end" / "progress"</summary>
+    [JsonIgnore]
+    public string? EventType { get; set; }
 
-    public override string ToString()
+    public FateMessage()
     {
-        var specialTag = IsSpecial ? "[特殊]" : "";
-        return $"{specialTag}FATE: {FateName} @ {TerritoryName}({World}) {TimeString}";
+        Type = "fate";
     }
 }

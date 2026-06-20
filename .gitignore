@@ -30,3 +30,8 @@ Thumbs.db
 tmp/
 *.tmp
 *.log
+
+test_*.py
+bin/
+obj/
+.kunsdd

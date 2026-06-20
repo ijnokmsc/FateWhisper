@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -7,6 +7,7 @@ using MQTTnet;
 using MQTTnet.Client;
 using MQTTnet.Protocol;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using SilverDasher.Models;
 
 namespace SilverDasher.Services;
@@ -14,48 +15,34 @@ namespace SilverDasher.Services;
 /// <summary>
 /// MQTT 通信服务，基于 MQTTnet 4.x 管理 WebSocket+TLS 连接。
 /// 负责 Connect/Disconnect/Subscribe/Publish/Reconnect。
+/// Topic 格式对齐 ACT 版: {dc_label}/{world_label}/{type}/{id}
 /// </summary>
 public class MqttService : IDisposable
 {
     private readonly IPluginLog _log;
+    private readonly DataManager _dataManager;
     private IMqttClient? _mqttClient;
     private MqttClientOptions? _mqttOptions;
     private readonly string _brokerUrl;
 
-    /// <summary>
-    /// MQTT 用户名。可通过 UpdateCredentials() 在运行时更新。
-    /// </summary>
     private string _mqttUsername;
-
-    /// <summary>
-    /// MQTT 密码。可通过 UpdateCredentials() 在运行时更新。
-    /// </summary>
     private string _mqttPassword;
 
     private CancellationTokenSource? _reconnectCts;
     private int _reconnectAttempt;
     private const int MaxReconnectDelay = 60;
-    private const string Prefix = "[SilverDasher]";
+    private const string Prefix = "[FateWhisper]";
 
-    /// <summary>
-    /// 收到远程猎怪播报时触发。
-    /// </summary>
+    /// <summary>收到远程猎怪播报时触发。</summary>
     public event Action<HuntMessage>? HuntReceived;
 
-    /// <summary>
-    /// 收到远程 FATE 播报时触发。
-    /// </summary>
+    /// <summary>收到远程 FATE 播报时触发。</summary>
     public event Action<FateMessage>? FateReceived;
 
-    /// <summary>
-    /// MQTT 连接状态变更时触发。true=已连接。
-    /// </summary>
+    /// <summary>MQTT 连接状态变更时触发。true=已连接。</summary>
     public event Action<bool>? ConnectionStateChanged;
 
     private bool _isConnected;
-    /// <summary>
-    /// 当前是否已连接。
-    /// </summary>
     public bool IsConnected
     {
         get => _isConnected;
@@ -69,27 +56,15 @@ public class MqttService : IDisposable
         }
     }
 
-    /// <summary>
-    /// 初始化 MQTT 服务。
-    /// </summary>
-    /// <param name="log">日志服务。</param>
-    /// <param name="brokerUrl">MQTT Broker WebSocket URL。</param>
-    /// <param name="mqttUsername">MQTT 用户名。</param>
-    /// <param name="mqttPassword">MQTT 密码。</param>
-    public MqttService(IPluginLog log, string brokerUrl, string mqttUsername, string mqttPassword)
+    public MqttService(IPluginLog log, DataManager dataManager, string brokerUrl, string mqttUsername, string mqttPassword)
     {
         _log = log;
+        _dataManager = dataManager;
         _brokerUrl = brokerUrl;
         _mqttUsername = mqttUsername;
         _mqttPassword = mqttPassword;
     }
 
-    /// <summary>
-    /// 更新 MQTT 认证凭证。应在认证成功后调用，确保后续连接使用最新的凭证。
-    /// 如果当前已连接，凭证将在下次重连时生效。
-    /// </summary>
-    /// <param name="username">新的 MQTT 用户名。</param>
-    /// <param name="password">新的 MQTT 密码。</param>
     public void UpdateCredentials(string username, string password)
     {
         if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
@@ -97,15 +72,11 @@ public class MqttService : IDisposable
             _log.Warning($"{Prefix} UpdateCredentials: 用户名或密码为空，凭证未更新");
             return;
         }
-
         _mqttUsername = username;
         _mqttPassword = password;
         _log.Information($"{Prefix} MQTT 凭证已更新 (user={username[..Math.Min(username.Length, 4)]}...)");
     }
 
-    /// <summary>
-    /// 连接到 MQTT Broker。
-    /// </summary>
     public async Task ConnectAsync()
     {
         try
@@ -157,41 +128,32 @@ public class MqttService : IDisposable
         }
     }
 
-    /// <summary>
-    /// 断开 MQTT 连接。
-    /// </summary>
     public async Task DisconnectAsync()
     {
         _reconnectCts?.Cancel();
         if (_mqttClient is not null && _mqttClient.IsConnected)
         {
-            try
-            {
-                await _mqttClient.DisconnectAsync();
-            }
-            catch (Exception ex)
-            {
-                _log.Warning($"{Prefix} MQTT 断开异常: {ex.Message}");
-            }
+            try { await _mqttClient.DisconnectAsync(); }
+            catch (Exception ex) { _log.Warning($"{Prefix} MQTT 断开异常: {ex.Message}"); }
         }
-
         IsConnected = false;
     }
 
     /// <summary>
-    /// 订阅 MQTT Topic。
+    /// 订阅 MQTT Topic — ACT 版格式: {dc_label}/{world_label}/{type}/{id}
+    /// 使用通配符订阅所有大区/服务器/ID。
     /// </summary>
     private async Task SubscribeTopicsAsync()
     {
-        if (_mqttClient is null || !_mqttClient.IsConnected)
-        {
-            return;
-        }
+        if (_mqttClient is null || !_mqttClient.IsConnected) return;
 
         try
         {
-            var huntTopic = "sd/hunt/#";
-            var fateTopic = "sd/fate/#";
+            // ACT 版 Topic 格式: {DataCenterLabel}/{WorldLabel}/{type}/{id}
+            // 例: LuXingNiao/HongYuHai/hunt/2957
+            // 通配符: + = 单层, # = 多层
+            var huntTopic = "+/+/hunt/+";
+            var fateTopic = "+/+/fate/+";
 
             await _mqttClient.SubscribeAsync(new MqttTopicFilterBuilder()
                 .WithTopic(huntTopic)
@@ -212,12 +174,10 @@ public class MqttService : IDisposable
     }
 
     /// <summary>
-    /// 发布猎怪消息到 MQTT。
+    /// 发布猎怪消息（本地检测 → 服务器）。
+    /// ACT 版发布路径: upload/u/{session}，payload 经 Weave 编码。
+    /// 当前无有效 session，暂发布到通用 topic。
     /// </summary>
-    /// <param name="message">猎怪消息。</param>
-    /// <param name="datacenter">大区。</param>
-    /// <param name="world">服务器。</param>
-    /// <param name="rank">等级。</param>
     public async Task PublishHuntAsync(HuntMessage message, string datacenter, string world, string rank)
     {
         if (_mqttClient is null || !_mqttClient.IsConnected)
@@ -228,7 +188,7 @@ public class MqttService : IDisposable
 
         try
         {
-            var topic = $"sd/hunt/{datacenter}/{world}/{rank.ToLowerInvariant()}";
+            var topic = $"upload/u/{_mqttUsername}";
             var payload = JsonConvert.SerializeObject(message);
             var mqttMessage = new MqttApplicationMessageBuilder()
                 .WithTopic(topic)
@@ -237,7 +197,7 @@ public class MqttService : IDisposable
                 .Build();
 
             await _mqttClient.PublishAsync(mqttMessage);
-            _log.Debug($"{Prefix} 已发布猎怪: {topic} -> {message}");
+            _log.Debug($"{Prefix} 已发布猎怪: {topic}");
         }
         catch (Exception ex)
         {
@@ -246,12 +206,8 @@ public class MqttService : IDisposable
     }
 
     /// <summary>
-    /// 发布 FATE 消息到 MQTT。
+    /// 发布 FATE 消息（本地检测 → 服务器）。
     /// </summary>
-    /// <param name="message">FATE 消息。</param>
-    /// <param name="datacenter">大区。</param>
-    /// <param name="world">服务器。</param>
-    /// <param name="type">FATE 类型。</param>
     public async Task PublishFateAsync(FateMessage message, string datacenter, string world, string type)
     {
         if (_mqttClient is null || !_mqttClient.IsConnected)
@@ -262,7 +218,7 @@ public class MqttService : IDisposable
 
         try
         {
-            var topic = $"sd/fate/{datacenter}/{world}/{type}";
+            var topic = $"upload/u/{_mqttUsername}";
             var payload = JsonConvert.SerializeObject(message);
             var mqttMessage = new MqttApplicationMessageBuilder()
                 .WithTopic(topic)
@@ -271,7 +227,7 @@ public class MqttService : IDisposable
                 .Build();
 
             await _mqttClient.PublishAsync(mqttMessage);
-            _log.Debug($"{Prefix} 已发布 FATE: {topic} -> {message}");
+            _log.Debug($"{Prefix} 已发布 FATE: {topic}");
         }
         catch (Exception ex)
         {
@@ -304,6 +260,9 @@ public class MqttService : IDisposable
 
     /// <summary>
     /// 收到 MQTT 消息回调。
+    /// Topic 格式: {dc_label}/{world_label}/{type}/{id}
+    /// Payload 格式: {"i":instance, "hp":health/progress, "m":map, "c":{"x":int,"y":int}}
+    /// 对齐 ACT 版 Notifier.Unpack 逻辑。
     /// </summary>
     private Task OnMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs args)
     {
@@ -313,29 +272,81 @@ public class MqttService : IDisposable
             var payload = Encoding.UTF8.GetString(args.ApplicationMessage.PayloadSegment);
 
             _log.Debug($"{Prefix} MQTT 收到消息 topic={topic} len={payload.Length}");
-            _log.Information($"{Prefix} MQTT 消息: {topic} -> {payload[..Math.Min(payload.Length, 200)]}");
 
-            if (topic.Contains("/hunt/"))
+            // 解析 Topic: {dc_label}/{world_label}/{type}/{id}
+            var segments = topic.Split('/');
+            if (segments.Length < 4) return Task.CompletedTask;
+
+            var dcLabel = segments[0];
+            var worldLabel = segments[1];
+            var msgType = segments[2];  // "hunt" 或 "fate"
+            var msgIdStr = segments[3];
+
+            if (!int.TryParse(msgIdStr, out var msgId)) return Task.CompletedTask;
+
+            // 解析 JSON payload
+            var json = JObject.Parse(payload);
+
+            // 共享字段
+            var instance = json["i"]?.Value<uint>() ?? 0;
+            var map = json["m"]?.Value<uint>() ?? 0;
+            var hp = json["hp"]?.Value<int>() ?? 100;
+
+            // 从数据管理器查世界和区域名称（worldLabel 是拼音如 HongYuHai）
+            var worldName = _dataManager.LookupWorldNameByLabel(worldLabel);
+            var territoryName = _dataManager.LookupTerritoryName(map.ToString());
+
+            Coordinate? coord = null;
+            if (json["c"] is JObject cObj)
             {
-                var huntMsg = JsonConvert.DeserializeObject<HuntMessage>(payload);
-                if (huntMsg is not null)
+                coord = new Coordinate
                 {
-                    _log.Information($"{Prefix} 猎怪播报触发: {huntMsg}");
-                    HuntReceived?.Invoke(huntMsg);
-                }
-                else
-                    _log.Warning($"{Prefix} 猎怪消息反序列化失败");
+                    X = cObj["x"]?.Value<int>() ?? 0,
+                    Y = cObj["y"]?.Value<int>() ?? 0
+                };
             }
-            else if (topic.Contains("/fate/"))
+
+            if (msgType == "hunt")
             {
-                var fateMsg = JsonConvert.DeserializeObject<FateMessage>(payload);
-                if (fateMsg is not null)
+                var huntMsg = new HuntMessage
                 {
-                    _log.Information($"{Prefix} FATE 播报触发: {fateMsg}");
-                    FateReceived?.Invoke(fateMsg);
-                }
-                else
-                    _log.Warning($"{Prefix} FATE 消息反序列化失败");
+                    Id = msgId,
+                    Instance = instance,
+                    Map = map,
+                    Health = hp,
+                    Coordinate = coord,
+                    TerritoryName = territoryName,
+                    WorldName = worldName,
+                    Datacenter = dcLabel,
+                    Rank = _dataManager.LookupHuntRank(msgIdStr),
+                    MobName = _dataManager.LookupHuntName(msgIdStr),
+                };
+
+                _log.Information($"{Prefix} 猎怪播报触发: id={msgId} hp={hp}% map={map} ({territoryName})");
+                HuntReceived?.Invoke(huntMsg);
+            }
+            else if (msgType == "fate")
+            {
+                // ACT 版: FATE payload 的 hp = 剩余 HP (100=刚开始)，需要 100-hp 得进度
+                var progress = Math.Max(0, 100 - hp);
+
+                var fateMsg = new FateMessage
+                {
+                    Id = msgId,
+                    Instance = instance,
+                    Map = map,
+                    Progress = progress,
+                    Coordinate = coord,
+                    TerritoryName = territoryName,
+                    WorldName = worldName,
+                    Datacenter = dcLabel,
+                    FateName = _dataManager.LookupFateName(msgIdStr),
+                    IsSpecial = _dataManager.IsFateSpecial(msgIdStr),
+                    EventType = progress >= 100 ? "end" : (progress == 0 ? "start" : "progress"),
+                };
+
+                _log.Information($"{Prefix} FATE 播报触发: id={msgId} progress={progress}% map={map} ({territoryName})");
+                FateReceived?.Invoke(fateMsg);
             }
         }
         catch (Exception ex)
@@ -372,7 +383,6 @@ public class MqttService : IDisposable
                     {
                         _reconnectAttempt++;
 
-                        // 重建 MqttOptions 以使用最新的凭证
                         var rebuiltOptions = new MqttClientOptionsBuilder()
                             .WithWebSocketServer(_brokerUrl)
                             .WithTls(new MqttClientOptionsBuilderTlsParameters
@@ -399,10 +409,7 @@ public class MqttService : IDisposable
                         }
                     }
                 }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
+                catch (OperationCanceledException) { break; }
                 catch (Exception ex)
                 {
                     _reconnectAttempt++;
@@ -412,10 +419,6 @@ public class MqttService : IDisposable
         }, token);
     }
 
-    /// <summary>
-    /// 释放 MQTT 客户端和重连资源。
-    /// 使用带超时保护的异步断开，避免阻塞 Dispose 调用。
-    /// </summary>
     public void Dispose()
     {
         _reconnectCts?.Cancel();
@@ -431,30 +434,16 @@ public class MqttService : IDisposable
             {
                 try
                 {
-                    // 带超时保护的异步断开，避免 Dispose 同步阻塞无限等待
                     var disconnectTask = Task.Run(async () =>
                     {
-                        try
-                        {
-                            await _mqttClient.DisconnectAsync();
-                        }
-                        catch
-                        {
-                            // 忽略断开异常
-                        }
+                        try { await _mqttClient.DisconnectAsync(); }
+                        catch { }
                     });
-
                     if (!disconnectTask.Wait(TimeSpan.FromSeconds(3)))
-                    {
                         _log.Warning($"{Prefix} MQTT 断开超时 (3s)，强制释放");
-                    }
                 }
-                catch
-                {
-                    // 忽略断开异常
-                }
+                catch { }
             }
-
             _mqttClient.Dispose();
         }
 

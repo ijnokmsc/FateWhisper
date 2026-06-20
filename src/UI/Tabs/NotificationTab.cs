@@ -1,20 +1,30 @@
-using System;
+﻿using System;
+using System.Collections.Generic;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Plugin.Services;
 using SilverDasher.Config;
+using SilverDasher.Models;
 using SilverDasher.Services;
 
 namespace SilverDasher.UI.Tabs;
 
 /// <summary>
-/// 通知设置 Tab，管理通知渠道开关 + 测试按钮。
+/// 通知设置 Tab — ACT 版风格。含逐状态通知开关 + 大区接收选项。
 /// </summary>
 public class NotificationTab
 {
     private readonly PluginConfig _config;
     private readonly IPluginLog _log;
     private readonly NotificationService _notification;
-    private const string Prefix = "[SilverDasher]";
+    private const string Prefix = "[FateWhisper]";
+
+    private static readonly (string Key, string Label)[] StateLabels =
+    [
+        ("healthy", "健康（发现）"),
+        ("taunted", "已开怪"),
+        ("dying",   "被暴打中"),
+        ("died",    "死亡"),
+    ];
 
     public NotificationTab(PluginConfig config, IPluginLog log, NotificationService notification)
     {
@@ -23,120 +33,158 @@ public class NotificationTab
         _notification = notification;
     }
 
-    /// <summary>
-    /// 绘制通知设置界面。
-    /// </summary>
     public void Draw()
     {
-        ImGui.TextColored(new System.Numerics.Vector4(0.3f, 0.8f, 1.0f, 1.0f), "通知设置");
-        ImGui.Spacing();
-
-        // 游戏 Toast 通知
-        var toastEnabled = _config.Notification.ToastEnabled;
-        if (ImGui.Checkbox("游戏内 Toast 通知", ref toastEnabled))
-        {
-            _config.Notification.ToastEnabled = toastEnabled;
-            _config.Save();
-        }
-        ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1.0f),
-            "  使用 FF14 原生 Toast 提示框（屏幕右下角弹出）。");
-
-        ImGui.Spacing();
-
-        // 游戏 Toast 通知
-        var chatEnabled = _config.Notification.ChatLogEnabled;
-        if (ImGui.Checkbox("游戏聊天框通知", ref chatEnabled))
-        {
-            _config.Notification.ChatLogEnabled = chatEnabled;
-            _config.Save();
-        }
-        ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1.0f),
-            "  在游戏聊天窗口中打印播报消息。");
-
-        ImGui.Spacing();
-
-        // 系统提示音
-        var soundEnabled = _config.Notification.SoundEnabled;
-        if (ImGui.Checkbox("系统提示音效（默认关闭）", ref soundEnabled))
-        {
-            _config.Notification.SoundEnabled = soundEnabled;
-            _config.Save();
-        }
-        ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1.0f),
-            "  收到播报时播放 Windows 系统提示音。");
-
-        ImGui.Spacing();
-
-        // TTS 语音播报
-        var ttsEnabled = _config.Notification.TtsEnabled;
-        if (ImGui.Checkbox("TTS 语音播报", ref ttsEnabled))
-        {
-            _config.Notification.TtsEnabled = ttsEnabled;
-            _config.Save();
-        }
-        ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1.0f),
-            "  使用系统语音引擎朗读播报内容。首次使用建议先测试。");
-
-        ImGui.Spacing();
-
-        // 副本暂停
-        var pauseInDuty = _config.Notification.PauseInDuty;
-        if (ImGui.Checkbox("副本内暂停通知", ref pauseInDuty))
-        {
-            _config.Notification.PauseInDuty = pauseInDuty;
-            _config.Save();
-        }
-        ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1.0f),
-            "  进入副本后自动暂停所有播报通知，退出副本后恢复。");
-
+        DrawNotificationChannels();
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
+        DrawPerStateToggle();
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        DrawReceptionOptions();
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        DrawMiscSettings();
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        DrawTestButtons();
+    }
 
-        // 通知前缀
-        ImGui.Text("通知消息前缀:");
+    private void DrawNotificationChannels()
+    {
+        ImGui.TextColored(new System.Numerics.Vector4(0.3f, 0.8f, 1.0f, 1.0f), "通知渠道");
+        ImGui.Spacing();
+
+        var chat = _config.Notification.ChatLogEnabled;
+        if (ImGui.Checkbox("游戏聊天框通知", ref chat))
+        { _config.Notification.ChatLogEnabled = chat; _config.Save(); }
+
+        var toast = _config.Notification.ToastEnabled;
+        if (ImGui.Checkbox("游戏内 Toast 通知", ref toast))
+        { _config.Notification.ToastEnabled = toast; _config.Save(); }
+        ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1.0f),
+            "  屏幕右下角弹出提示。");
+
+        var tts = _config.Notification.TtsEnabled;
+        if (ImGui.Checkbox("TTS 语音播报", ref tts))
+        { _config.Notification.TtsEnabled = tts; _config.Save(); }
+        ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1.0f),
+            "  微软晓晓中文语音朗读。");
+    }
+
+    private void DrawPerStateToggle()
+    {
+        ImGui.TextColored(new System.Numerics.Vector4(0.3f, 1.0f, 0.6f, 1.0f), "逐状态通知（ACT 版风格）");
+        ImGui.Spacing();
+
+        // 表头
+        ImGui.Columns(3, "stateCols", false);
+        ImGui.SetColumnWidth(0, 120);
+        ImGui.SetColumnWidth(1, 60);
+        ImGui.SetColumnWidth(2, 60);
+        ImGui.Text("状态"); ImGui.NextColumn();
+        ImGui.Text("TTS"); ImGui.NextColumn();
+        ImGui.Text("Toast"); ImGui.NextColumn();
+        ImGui.Separator();
+
+        foreach (var (key, label) in StateLabels)
+        {
+            ImGui.Text(label); ImGui.NextColumn();
+
+            var ttsVal = _config.Notification.TtsStates.GetValueOrDefault(key, false);
+            if (ImGui.Checkbox($"##tts_{key}", ref ttsVal))
+            { _config.Notification.TtsStates[key] = ttsVal; _config.Save(); }
+            ImGui.NextColumn();
+
+            var toastVal = _config.Notification.ToastStates.GetValueOrDefault(key, false);
+            if (ImGui.Checkbox($"##toast_{key}", ref toastVal))
+            { _config.Notification.ToastStates[key] = toastVal; _config.Save(); }
+            ImGui.NextColumn();
+        }
+
+        ImGui.Columns(1);
+    }
+
+    private void DrawReceptionOptions()
+    {
+        ImGui.TextColored(new System.Numerics.Vector4(1.0f, 0.6f, 0.2f, 1.0f), "大区接收选项");
+        ImGui.Spacing();
+
+        var cwHunt = _config.Notification.CrossWorldHunt;
+        if (ImGui.Checkbox("同大区猎怪播报", ref cwHunt))
+        { _config.Notification.CrossWorldHunt = cwHunt; _config.Save(); }
+
+        var cdcHunt = _config.Notification.CrossDCHunt;
+        if (ImGui.Checkbox("跨大区猎怪播报", ref cdcHunt))
+        { _config.Notification.CrossDCHunt = cdcHunt; _config.Save(); }
+
+        ImGui.Spacing();
+
+        var fate = _config.Notification.FateEnabled;
+        if (ImGui.Checkbox("FATE 播报", ref fate))
+        { _config.Notification.FateEnabled = fate; _config.Save(); }
+
+        if (_config.Notification.FateEnabled)
+        {
+            ImGui.Indent(16f);
+            var common = _config.Notification.FateCommon;
+            if (ImGui.Checkbox("普通 FATE", ref common))
+            { _config.Notification.FateCommon = common; _config.Save(); }
+
+            var special = _config.Notification.FateSpecial;
+            if (ImGui.Checkbox("特殊 FATE", ref special))
+            { _config.Notification.FateSpecial = special; _config.Save(); }
+            ImGui.Unindent(16f);
+        }
+    }
+
+    private void DrawMiscSettings()
+    {
+        ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1.0f), "其他设置");
+        ImGui.Spacing();
+
+        var pause = _config.Notification.PauseInDuty;
+        if (ImGui.Checkbox("副本内暂停通知", ref pause))
+        { _config.Notification.PauseInDuty = pause; _config.Save(); }
+
         var prefix = _config.Notification.Prefix;
+        ImGui.Text("通知前缀:");
+        ImGui.SameLine();
         if (ImGui.InputText("##prefix", ref prefix, 64))
-        {
-            _config.Notification.Prefix = prefix;
-            _config.Save();
-        }
+        { _config.Notification.Prefix = prefix; _config.Save(); }
+    }
 
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-
-        // === 测试按钮 ===
+    private void DrawTestButtons()
+    {
         ImGui.TextColored(new System.Numerics.Vector4(0.3f, 1.0f, 0.6f, 1.0f), "测试");
         ImGui.Spacing();
 
-        if (ImGui.Button("测试聊天框通知"))
+        if (ImGui.Button("测试聊天框"))
         {
-            _notification.OnHuntBroadcast(new Models.HuntMessage
+            _notification.OnHuntBroadcast(new HuntMessage
             {
-                MobId = "0",
-                MobName = "S级恶名精英·测试怪",
-                Rank = "S",
-                Territory = "128",
-                World = "萌芽池",
-                IsCrossDc = false
+                Id = 0, Rank = "S", MobName = "S级恶名精英·测试怪",
+                TerritoryName = "拉诺西亚", WorldName = "萌芽池",
+                Health = 100,
             });
         }
 
         ImGui.SameLine();
 
-        if (ImGui.Button("测试游戏 Toast"))
+        if (ImGui.Button("测试 Toast"))
         {
             _notification.TestToast("S级恶名精英出现在拉诺西亚·萌芽池！");
-            _log.Information($"{Prefix} 用户测试了游戏 Toast");
         }
 
         ImGui.SameLine();
 
-        if (ImGui.Button("测试 TTS 语音"))
+        if (ImGui.Button("测试 TTS"))
         {
-            _ = _notification.TestTts("S级恶名精英出现在萌芽池，请注意查看");
-            _log.Information($"{Prefix} 用户测试了 TTS 语音");
+            _ = _notification.TestTts("S级恶名精英出现在萌芽池");
         }
     }
 }

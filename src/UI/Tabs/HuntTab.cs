@@ -1,149 +1,156 @@
-using System;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Plugin.Services;
 using SilverDasher.Config;
+using SilverDasher.Services;
+using SilverDasher.UI.Widgets;
 
 namespace SilverDasher.UI.Tabs;
 
 /// <summary>
-/// 猎怪订阅 Tab，管理 CW/CDC 猎怪等级和区域筛选。
+/// 猎怪订阅 Tab — ACT 版风格树形勾选管理。
+/// 按版本(Patch)→猎怪ID 树形展示，勾选即订阅。
 /// </summary>
 public class HuntTab
 {
     private readonly PluginConfig _config;
+    private readonly DataManager _dataManager;
     private readonly IPluginLog _log;
-    private const string Prefix = "[SilverDasher]";
 
-    public HuntTab(PluginConfig config, IPluginLog log)
+    private CheckTreeNode? _huntRoot;
+    private bool _treeBuilt;
+
+    public HuntTab(PluginConfig config, DataManager dataManager, IPluginLog log)
     {
         _config = config;
+        _dataManager = dataManager;
         _log = log;
     }
 
-    /// <summary>
-    /// 绘制猎怪订阅界面。
-    /// </summary>
     public void Draw()
     {
-        DrawCWHuntSection();
-        ImGui.Separator();
-        ImGui.Spacing();
-        DrawCDCHuntSection();
-    }
-
-    /// <summary>
-    /// 绘制同大区猎怪订阅设置。
-    /// </summary>
-    private void DrawCWHuntSection()
-    {
-        ImGui.TextColored(new System.Numerics.Vector4(0.3f, 0.8f, 1.0f, 1.0f), "同大区猎怪订阅");
+        ImGui.TextColored(new System.Numerics.Vector4(0.3f, 0.8f, 1.0f, 1.0f), "狩猎订阅管理");
         ImGui.Spacing();
 
-        var cwEnabled = _config.CWHunt.Enabled;
-        if (ImGui.Checkbox("启用同大区猎怪播报", ref cwEnabled))
+        if (!_treeBuilt)
         {
-            _config.CWHunt.Enabled = cwEnabled;
-            _config.Save();
+            BuildTree();
+            _treeBuilt = true;
         }
 
-        if (!_config.CWHunt.Enabled)
+        if (_huntRoot is not null)
         {
-            ImGui.PushStyleVar(ImGuiStyleVar.Alpha, 0.5f);
+            ImGui.Text($"已订阅 {_config.HuntSubscriptions.Count} 只猎怪");
+            ImGui.Spacing();
+
+            if (ImGui.Button("收起全部"))
+            {
+                // Can't collapse ImGui tree nodes programmatically
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("重建树"))
+            {
+                _treeBuilt = false;
+            }
+            ImGui.Spacing();
+
+            _huntRoot.Draw();
         }
-
-        ImGui.Indent(16f);
-
-        var rankB = _config.CWHunt.RankB;
-        if (ImGui.Checkbox("B 级猎怪", ref rankB))
+        else
         {
-            _config.CWHunt.RankB = rankB;
-            _config.Save();
-        }
-
-        var rankA = _config.CWHunt.RankA;
-        if (ImGui.Checkbox("A 级猎怪", ref rankA))
-        {
-            _config.CWHunt.RankA = rankA;
-            _config.Save();
-        }
-
-        var rankS = _config.CWHunt.RankS;
-        if (ImGui.Checkbox("S 级猎怪", ref rankS))
-        {
-            _config.CWHunt.RankS = rankS;
-            _config.Save();
-        }
-
-        var rankSS = _config.CWHunt.RankSS;
-        if (ImGui.Checkbox("SS 级猎怪", ref rankSS))
-        {
-            _config.CWHunt.RankSS = rankSS;
-            _config.Save();
-        }
-
-        ImGui.Unindent(16f);
-
-        if (!_config.CWHunt.Enabled)
-        {
-            ImGui.PopStyleVar();
+            ImGui.TextColored(new System.Numerics.Vector4(1f, 0.3f, 0.3f, 1.0f),
+                "猎怪数据为空。请检查 data/hunts.json 是否存在。");
         }
     }
 
-    /// <summary>
-    /// 绘制跨大区猎怪订阅设置。
-    /// </summary>
-    private void DrawCDCHuntSection()
+    private void BuildTree()
     {
-        ImGui.TextColored(new System.Numerics.Vector4(1.0f, 0.6f, 0.2f, 1.0f), "跨大区猎怪订阅");
-        ImGui.Spacing();
+        if (_dataManager.Hunts.Count == 0) return;
 
-        var cdcEnabled = _config.CDCHunt.Enabled;
-        if (ImGui.Checkbox("启用跨大区猎怪播报", ref cdcEnabled))
+        var subs = _config.HuntSubscriptions;
+        var root = new CheckTreeNode("全部狩猎", "hunt-all");
+        root.OnCheckChanged = (id, checked_) => OnHuntToggled(id, checked_);
+
+        // 按 Patch 分组
+        var byPatch = new Dictionary<int, List<KeyValuePair<string, Models.HuntMob>>>();
+        foreach (var kv in _dataManager.Hunts)
         {
-            _config.CDCHunt.Enabled = cdcEnabled;
+            if (int.TryParse(kv.Key, out var mobId) &&
+                int.TryParse(kv.Value.Patch, out var patch))
+            {
+                if (!byPatch.ContainsKey(patch))
+                    byPatch[patch] = [];
+                byPatch[patch].Add(kv);
+            }
+        }
+
+        foreach (var (patch, mobs) in byPatch.OrderBy(kv => kv.Key))
+        {
+            var patchName = GetPatchName(patch);
+            var patchNode = new CheckTreeNode(patchName, $"hunt-patch-{patch}");
+            patchNode.OnCheckChanged = (id, checked_) => OnHuntToggled(id, checked_);
+
+            foreach (var kv in mobs.OrderBy(m => m.Value.NameChs))
+            {
+                var mob = kv.Value;
+                var mobId = int.Parse(kv.Key);
+                var displayName = $"{GetTerritoryName(mob.Territory)} [{mob.Rank}] {mob.NameChs}";
+                var mobNode = new CheckTreeNode(displayName, $"hunt-id-{kv.Key}");
+                mobNode.OnCheckChanged = (id, checked_) => OnHuntToggled(id, checked_);
+
+                // 恢复已订阅状态
+                if (subs.Contains(mobId))
+                    mobNode.IsChecked = true;
+
+                patchNode.Add(mobNode);
+            }
+
+            root.Add(patchNode);
+        }
+
+        // 验证各级状态
+        foreach (var node in root.Nodes)
+            node.ValidateChildStatus();
+
+        _huntRoot = root;
+    }
+
+    private void OnHuntToggled(string id, bool isChecked)
+    {
+        try
+        {
+            var parts = id.Split('-');
+            if (parts.Length < 3 || parts[0] != "hunt" || parts[1] != "id") return;
+
+            var mobId = int.Parse(parts[2]);
+            if (isChecked)
+            {
+                if (!_config.HuntSubscriptions.Contains(mobId))
+                    _config.HuntSubscriptions.Add(mobId);
+            }
+            else
+            {
+                _config.HuntSubscriptions.RemoveAll(i => i == mobId);
+            }
+
             _config.Save();
         }
+        catch { }
+    }
 
-        if (!_config.CDCHunt.Enabled)
-        {
-            ImGui.PushStyleVar(ImGuiStyleVar.Alpha, 0.5f);
-        }
+    private string GetPatchName(int patch)
+    {
+        var patchInfo = _dataManager.Patches.FirstOrDefault(p => p.Code == patch);
+        return patchInfo is not null && !string.IsNullOrEmpty(patchInfo.NameChs)
+            ? patchInfo.NameChs
+            : $"Patch {patch}";
+    }
 
-        ImGui.Indent(16f);
-
-        var rankB = _config.CDCHunt.RankB;
-        if (ImGui.Checkbox("B 级猎怪##cdc", ref rankB))
-        {
-            _config.CDCHunt.RankB = rankB;
-            _config.Save();
-        }
-
-        var rankA = _config.CDCHunt.RankA;
-        if (ImGui.Checkbox("A 级猎怪##cdc", ref rankA))
-        {
-            _config.CDCHunt.RankA = rankA;
-            _config.Save();
-        }
-
-        var rankS = _config.CDCHunt.RankS;
-        if (ImGui.Checkbox("S 级猎怪##cdc", ref rankS))
-        {
-            _config.CDCHunt.RankS = rankS;
-            _config.Save();
-        }
-
-        var rankSS = _config.CDCHunt.RankSS;
-        if (ImGui.Checkbox("SS 级猎怪##cdc", ref rankSS))
-        {
-            _config.CDCHunt.RankSS = rankSS;
-            _config.Save();
-        }
-
-        ImGui.Unindent(16f);
-
-        if (!_config.CDCHunt.Enabled)
-        {
-            ImGui.PopStyleVar();
-        }
+    private string GetTerritoryName(string territoryId)
+    {
+        var name = _dataManager.LookupTerritoryName(territoryId);
+        return name != $"Zone {territoryId}" ? name : $"区域{territoryId}";
     }
 }

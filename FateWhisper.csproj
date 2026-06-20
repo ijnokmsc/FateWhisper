@@ -1,0 +1,32 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <PropertyGroup>
+    <DalamudLibPath>$(appdata)\XIVLauncherCN\addon\Hooks\dev\</DalamudLibPath>
+    <AssemblySearchPaths>$(AssemblySearchPaths);$(DalamudLibPath)</AssemblySearchPaths>
+    <AssemblyName>FateWhisper</AssemblyName>
+    <RootNamespace>SilverDasher</RootNamespace>
+    <Version>0.2.0.0</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <Description>FateWhisper — FF14 跨服猎怪+FATE播报插件，基于 SilverDasher 移植。</Description>
+    <PackageProjectUrl>https://github.com/FateWhisper/FateWhisper</PackageProjectUrl>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Edge_tts_sharp" Version="1.1.7" />
+    <PackageReference Include="MQTTnet" Version="4.2.1" />
+    <AdditionalFiles Include="data\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="DeployToDevPlugins" AfterTargets="Build">
+    <MakeDir Directories="$(appdata)\XIVLauncherCN\devPlugins\FateWhisper\" />
+    <ItemGroup>
+      <AllDlls Include="$(OutputPath)*.dll" />
+      <AllJson Include="$(OutputPath)*.json" />
+      <ManifestJson Include="$(ProjectDir)FateWhisper.json" />
+      <DataFiles Include="$(ProjectDir)data\*.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AllDlls)" DestinationFolder="$(appdata)\XIVLauncherCN\devPlugins\FateWhisper\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(AllJson)" DestinationFolder="$(appdata)\XIVLauncherCN\devPlugins\FateWhisper\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(ManifestJson)" DestinationFolder="$(appdata)\XIVLauncherCN\devPlugins\FateWhisper\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(DataFiles)" DestinationFolder="$(appdata)\XIVLauncherCN\devPlugins\FateWhisper\data\" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

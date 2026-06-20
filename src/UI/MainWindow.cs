@@ -1,4 +1,5 @@
-using System;
+﻿using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
@@ -17,7 +18,6 @@ public class MainWindow : Window, IDisposable
     private readonly IPluginLog _log;
     private readonly PluginConfig _config;
     private readonly DataManager _dataManager;
-    private readonly AuthService _authService;
     private readonly MqttService _mqttService;
     private readonly DutyMonitor _dutyMonitor;
 
@@ -27,7 +27,24 @@ public class MainWindow : Window, IDisposable
     private readonly SystemTab _systemTab;
     private int _activeTab;
 
+    // 通知日志
+    private readonly List<LogEntry> _notificationLog = new();
+    private const int MaxLogEntries = 200;
+
     private const string Prefix = "[SilverDasher]";
+
+    private static string GetVersionString()
+    {
+        try
+        {
+            var ver = typeof(Plugin).Assembly.GetName().Version;
+            return $"v{ver?.Major}.{ver?.Minor}.{ver?.Build}";
+        }
+        catch
+        {
+            return "v?.?.?";
+        }
+    }
 
     /// <summary>
     /// 初始化主窗口及所有子 Tab。
@@ -36,16 +53,14 @@ public class MainWindow : Window, IDisposable
         IPluginLog log,
         PluginConfig config,
         DataManager dataManager,
-        AuthService authService,
         MqttService mqttService,
         DutyMonitor dutyMonitor,
         NotificationService notificationService)
-        : base("SilverDasher##SilverDasherMainWindow")
+        : base($"FateWhisper {GetVersionString()}##FateWhisperMainWindow")
     {
         _log = log;
         _config = config;
         _dataManager = dataManager;
-        _authService = authService;
         _mqttService = mqttService;
         _dutyMonitor = dutyMonitor;
 
@@ -55,11 +70,11 @@ public class MainWindow : Window, IDisposable
             MaximumSize = new Vector2(800, 700)
         };
 
-        _huntTab = new HuntTab(config, log);
-        _fateTab = new FateTab(config, log);
+        _huntTab = new HuntTab(config, dataManager, log);
+        _fateTab = new FateTab(config, dataManager, log);
         _notificationTab = new NotificationTab(config, log, notificationService);
         _systemTab = new SystemTab(
-            config, log, dataManager, authService, mqttService, dutyMonitor);
+            config, log, dataManager, mqttService, dutyMonitor);
 
         IsOpen = config.WindowVisible;
         _log.Information($"{Prefix} 主窗口已初始化");
@@ -89,7 +104,7 @@ public class MainWindow : Window, IDisposable
     {
         if (ImGui.BeginTabBar("SilverDasherTabs"))
         {
-            string[] tabNames = { "猎怪", "FATE", "通知", "系统" };
+            string[] tabNames = { "猎怪", "FATE", "通知", "系统", "日志" };
             for (var i = 0; i < tabNames.Length; i++)
             {
                 if (ImGui.BeginTabItem($"{tabNames[i]}##tab{i}"))
@@ -122,6 +137,9 @@ public class MainWindow : Window, IDisposable
             case 3:
                 _systemTab.Draw();
                 break;
+            case 4:
+                DrawLogTab();
+                break;
             default:
                 _activeTab = 0;
                 _huntTab.Draw();
@@ -152,10 +170,71 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
+    /// 绘制日志 Tab 内容。
+    /// </summary>
+    private void DrawLogTab()
+    {
+        if (ImGui.SmallButton("清空") && _notificationLog.Count > 0)
+            _notificationLog.Clear();
+        ImGui.SameLine();
+        ImGui.TextDisabled($"（共 {_notificationLog.Count} 条，上限 {MaxLogEntries}）");
+        ImGui.Separator();
+
+        var availHeight = ImGui.GetContentRegionAvail().Y;
+        ImGui.BeginChild("LogContent", new Vector2(0, availHeight), true);
+        foreach (var entry in _notificationLog)
+        {
+            var color = entry.Level switch
+            {
+                LogLevel.Success => new Vector4(0.3f, 0.9f, 0.3f, 1f),
+                LogLevel.Warning => new Vector4(1f, 0.85f, 0.2f, 1f),
+                LogLevel.Error   => new Vector4(0.9f, 0.3f, 0.2f, 1f),
+                _                => new Vector4(0.85f, 0.85f, 0.85f, 1f)
+            };
+            ImGui.TextColored(color, $"[{entry.Time:HH:mm:ss}] {entry.Message}");
+        }
+        if (_notificationLog.Count > 0)
+            ImGui.SetScrollHereY(1.0f);
+        ImGui.EndChild();
+    }
+
+    /// <summary>
+    /// 添加一条通知日志（线程安全）。
+    /// </summary>
+    public void AddLog(string message, LogLevel level = LogLevel.Info)
+    {
+        _notificationLog.Add(new LogEntry(DateTime.Now, message, level));
+        while (_notificationLog.Count > MaxLogEntries)
+            _notificationLog.RemoveAt(0);
+    }
+
+    /// <summary>
     /// 释放资源。
     /// </summary>
     public void Dispose()
     {
         _log.Information($"{Prefix} 主窗口已释放");
+    }
+}
+
+public enum LogLevel
+{
+    Info,
+    Success,
+    Warning,
+    Error
+}
+
+public sealed class LogEntry
+{
+    public DateTime Time { get; }
+    public string Message { get; }
+    public LogLevel Level { get; }
+
+    public LogEntry(DateTime time, string message, LogLevel level)
+    {
+        Time = time;
+        Message = message;
+        Level = level;
     }
 }

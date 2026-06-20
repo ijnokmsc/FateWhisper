@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 using Dalamud.Hooking;
 using Dalamud.Plugin;
@@ -36,7 +36,7 @@ public class NetworkInterceptor : IDisposable
     private readonly string _worldName;
     private readonly string _datacenter;
 
-    private const string Prefix = "[SilverDasher]";
+    private const string Prefix = "[FateWhisper]";
     private const ushort FateStartType = 2370;
     private const ushort FateEndType = 2357;
     private const ushort FateProgressType = 2364;
@@ -254,13 +254,12 @@ public class NetworkInterceptor : IDisposable
 
             var message = new FateMessage
             {
-                FateId = fateIdStr,
+                Id = fateId,
                 FateName = _dataManager.LookupFateName(fateIdStr),
-                World = _worldName,
-                Territory = _currentTerritoryId,
+                World = 0,
+                Map = (uint)(ushort.TryParse(_currentTerritoryId, out var tid) ? tid : 0),
                 TerritoryName = _dataManager.LookupTerritoryName(_currentTerritoryId),
-                Type = "common",
-                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                Type_ = "common",
                 Datacenter = _datacenter,
                 IsSpecial = false,
                 IsLocal = true,
@@ -322,13 +321,12 @@ public class NetworkInterceptor : IDisposable
 
         var message = new FateMessage
         {
-            FateId = fateIdStr,
+            Id = fateId,
             FateName = _dataManager.LookupFateName(fateIdStr),
-            World = _worldName,
-            Territory = _currentTerritoryId,
+            World = 0,
+            Map = (uint)(ushort.TryParse(_currentTerritoryId, out var tid) ? tid : 0),
             TerritoryName = _dataManager.LookupTerritoryName(_currentTerritoryId),
-            Type = "common",
-            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Type_ = "common",
             Datacenter = _datacenter,
             IsSpecial = false,
             IsLocal = true,
@@ -349,12 +347,11 @@ public class NetworkInterceptor : IDisposable
 
         var message = new FateMessage
         {
-            FateId = fateIdStr,
+            Id = fateId,
             FateName = _dataManager.LookupFateName(fateIdStr),
-            World = _worldName,
-            Territory = _currentTerritoryId,
+            World = 0,
+            Map = (uint)(ushort.TryParse(_currentTerritoryId, out var tid) ? tid : 0),
             TerritoryName = _dataManager.LookupTerritoryName(_currentTerritoryId),
-            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             Datacenter = _datacenter,
             IsLocal = true,
             EventType = "end"
@@ -392,13 +389,12 @@ public class NetworkInterceptor : IDisposable
         //     {
         //         var message = new HuntMessage
         //         {
-        //             MobId = mobId,
+        //             Id = int.Parse(mobId),
         //             MobName = huntMob.NameChs,
-        //             World = _worldName,
-        //             Territory = _currentTerritoryId,
+        //             World = 0,
+        //             Map = (uint)(ushort.TryParse(_currentTerritoryId, out var tid) ? tid : 0),
         //             TerritoryName = _dataManager.LookupTerritoryName(_currentTerritoryId),
         //             Rank = huntMob.Rank,
-        //             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
         //             Datacenter = _datacenter,
         //             IsLocal = true
         //         };

@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json.Serialization;
 using Dalamud.Configuration;
 using Dalamud.Plugin;
 using Newtonsoft.Json;
@@ -12,6 +13,8 @@ namespace SilverDasher.Config;
 [Serializable]
 public class PluginConfig : IPluginConfiguration
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    [Newtonsoft.Json.JsonIgnore]
     private readonly IDalamudPluginInterface _pluginInterface;
 
     /// <summary>
@@ -91,6 +94,20 @@ public class PluginConfig : IPluginConfiguration
     [JsonProperty("mqtt_password")]
     public string? MqttPassword { get; set; }
 
+    // ===== ACT 版风格订阅管理 =====
+
+    /// <summary>
+    /// 已订阅的猎怪 ID 列表（ACT 版兼容）。
+    /// </summary>
+    [JsonProperty("hunt_subs")]
+    public List<int> HuntSubscriptions { get; set; } = [];
+
+    /// <summary>
+    /// 已订阅的 FATE ID 列表（ACT 版兼容）。
+    /// </summary>
+    [JsonProperty("fate_subs")]
+    public List<int> FateSubscriptions { get; set; } = [];
+
     /// <summary>
     /// 初始化配置实例并从持久化存储加载。
     /// </summary>
@@ -98,7 +115,25 @@ public class PluginConfig : IPluginConfiguration
     public PluginConfig(IDalamudPluginInterface pluginInterface)
     {
         _pluginInterface = pluginInterface;
-        Load();
+        LoadSafe();
+    }
+
+    /// <summary>
+    /// 无参构造器（Dalamud JSON 反序列化必需）。
+    /// 显式初始化所有属性为安全默认值。
+    /// </summary>
+    public PluginConfig()
+    {
+        _pluginInterface = null!;
+        Version = 1;
+        CWHunt = new();
+        CDCHunt = new();
+        CWFate = new();
+        Notification = new();
+        CharacterName = "";
+        WorldName = "";
+        Datacenter = "";
+        WindowVisible = false;
     }
 
     /// <summary>
@@ -106,27 +141,64 @@ public class PluginConfig : IPluginConfiguration
     /// </summary>
     public void Save()
     {
-        _pluginInterface.SavePluginConfig(this);
+        if (_pluginInterface is null) return;
+        try
+        {
+            _pluginInterface.SavePluginConfig(this);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[SilverDasher] 配置保存失败: {ex.Message}");
+        }
     }
 
     /// <summary>
-    /// 从持久化存储加载配置，若无则使用默认值。
+    /// 安全地从持久化存储加载配置，异常时使用默认值。
     /// </summary>
-    private void Load()
+    private void LoadSafe()
     {
-        var saved = _pluginInterface.GetPluginConfig() as PluginConfig;
-        if (saved is not null)
+        if (_pluginInterface is null) return;
+
+        try
         {
+            var saved = _pluginInterface.GetPluginConfig() as PluginConfig;
+            if (saved is null) return;
+            CopyFrom(saved);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[SilverDasher] 配置加载失败，使用默认值: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 从已保存配置复制所有属性（异常安全）。
+    /// </summary>
+    private void CopyFrom(PluginConfig saved)
+    {
+        if (saved is null) return;
+
+        try
+        {
+            Version = saved.Version;
             CWHunt = saved.CWHunt ?? new CWHuntConfig();
             CDCHunt = saved.CDCHunt ?? new CDCHuntConfig();
             CWFate = saved.CWFate ?? new CWFateConfig();
             Notification = saved.Notification ?? new NotificationConfig();
             AuthToken = saved.AuthToken;
-            CharacterName = saved.CharacterName;
-            WorldName = saved.WorldName;
+            CharacterName = saved.CharacterName ?? "";
+            WorldName = saved.WorldName ?? "";
             WorldId = saved.WorldId;
-            Datacenter = saved.Datacenter;
+            Datacenter = saved.Datacenter ?? "";
             WindowVisible = saved.WindowVisible;
+            MqttUsername = saved.MqttUsername;
+            MqttPassword = saved.MqttPassword;
+            HuntSubscriptions = saved.HuntSubscriptions ?? [];
+            FateSubscriptions = saved.FateSubscriptions ?? [];
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[SilverDasher] 配置复制失败: {ex.Message}");
         }
     }
 }
