@@ -3,9 +3,9 @@ using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
-using SilverDasher.Models;
+using FateWhisper.Models;
 
-namespace SilverDasher.Services;
+namespace FateWhisper.Services;
 
 /// <summary>
 /// 认证服务，对接 nest.garlandtools.cn/wake 获取 MQTT 会话令牌。

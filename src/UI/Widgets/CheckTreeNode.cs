@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using Dalamud.Bindings.ImGui;
 
-namespace SilverDasher.UI.Widgets;
+namespace FateWhisper.UI.Widgets;
 
 /// <summary>
 /// 可勾选树节点，对齐 ACT 版 CheckTreeNode。
@@ -46,24 +46,13 @@ public class CheckTreeNode
 
         if (_children.Count > 0)
         {
-            // 有子节点 — 显示复选框 + Tree 折叠
             var isChecked = IsChecked ?? false;
             var isPartial = IsChecked is null;
 
-            if (isPartial)
-            {
-                ImGui.PushStyleColor(ImGuiCol.CheckMark, 0xFF888888);
-            }
-
             var changed = ImGui.Checkbox($"##chk_{Id}", ref isChecked);
-
-            if (isPartial)
-            {
-                ImGui.PopStyleColor();
-            }
-
             ImGui.SameLine(0, ImGui.GetStyle().ItemInnerSpacing.X);
-            var open = ImGui.TreeNodeEx(Name);
+            var label = isPartial ? $"{Name} (部分)" : Name;
+            var open = ImGui.TreeNodeEx(label);
 
             if (changed) OnCheckedChanged(isChecked);
 
@@ -104,7 +93,11 @@ public class CheckTreeNode
         _parent?.ValidateChildStatus();
     }
 
-    internal void ValidateChildStatus()
+    /// <summary>
+    /// 根据子节点状态重新计算本节点的勾选状态，并递归向上传播。
+    /// 供外部（如 OnHuntToggled/OnFateToggled）在就地更新叶节点后调用。
+    /// </summary>
+    public void ValidateChildStatus()
     {
         int checkedCount = 0, uncheckedCount = 0;
         foreach (var child in _children)
@@ -116,12 +109,16 @@ public class CheckTreeNode
             }
         }
 
+        var old = IsChecked;
         if (checkedCount == _children.Count)
             IsChecked = true;
         else if (uncheckedCount == _children.Count)
             IsChecked = false;
         else
             IsChecked = null;
+
+        if (old != IsChecked)
+            System.Diagnostics.Debug.WriteLine($"[FateWhisper] Validate: {Name}({Id}) checked={checkedCount}/{_children.Count} IsChecked {old}→{IsChecked}");
 
         _parent?.ValidateChildStatus();
     }

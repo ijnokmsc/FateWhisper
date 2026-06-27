@@ -1,13 +1,13 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Plugin.Services;
-using SilverDasher.Config;
-using SilverDasher.Services;
-using SilverDasher.UI.Widgets;
+using FateWhisper.Config;
+using FateWhisper.Services;
+using FateWhisper.UI.Widgets;
 
-namespace SilverDasher.UI.Tabs;
+namespace FateWhisper.UI.Tabs;
 
 /// <summary>
 /// FATE 订阅 Tab — ACT 版风格树形勾选管理。
@@ -18,16 +18,19 @@ public class FateTab
     private readonly PluginConfig _config;
     private readonly DataManager _dataManager;
     private readonly IPluginLog _log;
+    private readonly SubscriptionsStore _subs;
 
     private CheckTreeNode? _fateRoot;
     private CheckTreeNode? _specialFateRoot;
-    private bool _treeBuilt;
+    private readonly Dictionary<string, CheckTreeNode> _nodeLookup = [];
+    private readonly Dictionary<string, string> _leafParentMap = [];
 
-    public FateTab(PluginConfig config, DataManager dataManager, IPluginLog log)
+    public FateTab(PluginConfig config, DataManager dataManager, IPluginLog log, SubscriptionsStore subsStore)
     {
         _config = config;
         _dataManager = dataManager;
         _log = log;
+        _subs = subsStore;
     }
 
     public void Draw()
@@ -35,19 +38,14 @@ public class FateTab
         ImGui.TextColored(new System.Numerics.Vector4(0.3f, 0.8f, 1.0f, 1.0f), "FATE 订阅管理");
         ImGui.Spacing();
 
-        if (!_treeBuilt)
-        {
+        if (_fateRoot is null)
             BuildTree();
-            _treeBuilt = true;
-        }
 
-        ImGui.Text($"已订阅 {_config.FateSubscriptions.Count} 个 FATE");
+        ImGui.Text($"已订阅 {_subs.FateIds.Count} 个 FATE");
         ImGui.Spacing();
 
         if (ImGui.Button("重建树"))
-        {
-            _treeBuilt = false;
-        }
+            BuildTree();
         ImGui.Spacing();
 
         // 普通 FATE 树
@@ -69,10 +67,13 @@ public class FateTab
     {
         if (_dataManager.Fates.Count == 0) return;
 
-        var subs = _config.FateSubscriptions;
+        _nodeLookup.Clear();
+        _leafParentMap.Clear();
+        var subs = _subs.FateIds;
 
         // 普通 FATE：按 Patch → 地图 → FATE
         var root = new CheckTreeNode("全部 FATE", "fate-all");
+        _nodeLookup["fate-all"] = root;
         root.OnCheckChanged = (id, checked_) => OnFateToggled(id, checked_);
         BuildRegularFateTree(root, subs);
         root.ValidateChildStatus();
@@ -82,6 +83,7 @@ public class FateTab
         if (_dataManager.SpecialFateGroups.Count > 0)
         {
             var spRoot = new CheckTreeNode("全部特殊 FATE", "fate-allsp-0");
+            _nodeLookup["fate-allsp-0"] = spRoot;
             spRoot.OnCheckChanged = (id, checked_) => OnFateToggled(id, checked_);
 
             foreach (var group in _dataManager.SpecialFateGroups)
@@ -98,7 +100,7 @@ public class FateTab
     /// <summary>
     /// 构建普通 FATE 的版本→地图树。
     /// </summary>
-    private void BuildRegularFateTree(CheckTreeNode root, List<int> subs)
+    private void BuildRegularFateTree(CheckTreeNode root, IReadOnlyList<int> subs)
     {
         var byPatch = new Dictionary<int, List<KeyValuePair<string, Models.FateInfo>>>();
         foreach (var kv in _dataManager.Fates)
@@ -116,6 +118,7 @@ public class FateTab
         {
             var patchName = GetPatchName(patch);
             var patchNode = new CheckTreeNode(patchName, $"fate-patch-{patch}");
+            _nodeLookup[$"fate-patch-{patch}"] = patchNode;
             patchNode.OnCheckChanged = (id, checked_) => OnFateToggled(id, checked_);
 
             var byMap = fates.GroupBy(f => f.Value.Territory)
@@ -126,22 +129,28 @@ public class FateTab
                 var mapId = mapGroup.Key.ToString();
                 var mapName = GetMapName(mapId);
                 var mapNode = new CheckTreeNode(mapName, $"fate-map-{mapId}");
+                _nodeLookup[$"fate-map-{mapId}"] = mapNode;
                 mapNode.OnCheckChanged = (id, checked_) => OnFateToggled(id, checked_);
 
                 foreach (var kv in mapGroup.OrderBy(f => f.Value.NameChs))
                 {
                     var fateId = int.Parse(kv.Key);
                     var displayName = kv.Value.NameChs;
-                    var fateNode = new CheckTreeNode(displayName, $"fate-id-{kv.Key}");
+                    var nodeId = $"fate-id-{kv.Key}";
+                    var fateNode = new CheckTreeNode(displayName, nodeId);
+                    _nodeLookup[nodeId] = fateNode;
+                    _leafParentMap[nodeId] = $"fate-map-{mapId}";
                     fateNode.OnCheckChanged = (id, checked_) => OnFateToggled(id, checked_);
 
-                    if (subs.Contains(fateId))
-                        fateNode.IsChecked = true;
+                if (subs.Contains(fateId))
+                    fateNode.IsChecked = true;
 
-                    mapNode.Add(fateNode);
-                }
+                mapNode.Add(fateNode);
+            }
 
-                patchNode.Add(mapNode);
+            // 计算地图节点状态（子节点已全部添加）
+            mapNode.ValidateChildStatus();
+            patchNode.Add(mapNode);
             }
 
             root.Add(patchNode);
@@ -151,10 +160,11 @@ public class FateTab
     /// <summary>
     /// 递归构建特殊 FATE 分组节点（对应 ACT 版 BuildFateGroupNode）。
     /// </summary>
-    private CheckTreeNode BuildFateGroupNode(Models.HuntGroup group, List<int> subs)
+    private CheckTreeNode BuildFateGroupNode(Models.HuntGroup group, IReadOnlyList<int> subs)
     {
         var nodeId = $"fate-group-{group.Group}";
         var node = new CheckTreeNode(group.Name, nodeId);
+        _nodeLookup[nodeId] = node;
         node.OnCheckChanged = (id, checked_) => OnFateToggled(id, checked_);
 
         // 递归子分组
@@ -176,6 +186,8 @@ public class FateTab
 
                 var fateName = _dataManager.LookupFateName(itemId);
                 var leafNode = new CheckTreeNode(fateName, $"fate-id-{itemId}");
+                _nodeLookup[$"fate-id-{itemId}"] = leafNode;
+                _leafParentMap[$"fate-id-{itemId}"] = nodeId;
                 leafNode.OnCheckChanged = (id, checked_) => OnFateToggled(id, checked_);
 
                 if (subs.Contains(fateId))
@@ -185,6 +197,8 @@ public class FateTab
             }
         }
 
+        // 自底向上计算状态（子节点已全部添加）
+        node.ValidateChildStatus();
         return node;
     }
 
@@ -197,18 +211,27 @@ public class FateTab
 
             var fateId = int.Parse(parts[2]);
             if (isChecked)
-            {
-                if (!_config.FateSubscriptions.Contains(fateId))
-                    _config.FateSubscriptions.Add(fateId);
-            }
+                _subs.AddFate(fateId);
             else
+                _subs.RemoveFate(fateId);
+
+            // 就地更新节点视觉状态（不重建整个树）
+            if (_nodeLookup.TryGetValue(id, out var node))
             {
-                _config.FateSubscriptions.RemoveAll(i => i == fateId);
+                node.IsChecked = isChecked;
+                if (_leafParentMap.TryGetValue(id, out var parentId) &&
+                    _nodeLookup.TryGetValue(parentId, out var parentNode))
+                {
+                    parentNode.ValidateChildStatus();
+                }
             }
 
-            _config.Save();
+            _log.Debug($"[FateWhisper] FATE 订阅变更: {id}={(isChecked ? "✓" : "✗")} 总数={_subs.FateIds.Count}");
         }
-        catch { }
+        catch (Exception ex)
+        {
+            _log.Error($"[FateWhisper] FATE 订阅保存失败: {ex.Message}");
+        }
     }
 
     private string GetPatchName(int patch)

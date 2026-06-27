@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using Edge_tts_sharp;
 using Edge_tts_sharp.Model;
 
-namespace SilverDasher.Services;
+namespace FateWhisper.Services;
 
 /// <summary>
 /// TTS 语音播报 — edge_tts_sharp (内置 NAudio 播放)。

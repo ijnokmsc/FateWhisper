@@ -1,6 +1,6 @@
 using Newtonsoft.Json;
 
-namespace SilverDasher.Models;
+namespace FateWhisper.Models;
 
 /// <summary>
 /// FATE 消息模型，对齐 ACT 版 SilverDasher MQTT 协议。
@@ -45,6 +45,10 @@ public class FateMessage : Message
     /// <summary>大区名称</summary>
     [JsonIgnore]
     public string? Datacenter { get; set; }
+
+    /// <summary>是否为跨大区消息</summary>
+    [JsonIgnore]
+    public bool IsCrossDc { get; set; }
 
     /// <summary>是否为特殊 FATE</summary>
     [JsonIgnore]

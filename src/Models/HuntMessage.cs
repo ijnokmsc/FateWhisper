@@ -1,6 +1,6 @@
 using Newtonsoft.Json;
 
-namespace SilverDasher.Models;
+namespace FateWhisper.Models;
 
 /// <summary>
 /// 猎怪消息模型，对齐 ACT 版 SilverDasher MQTT 协议。

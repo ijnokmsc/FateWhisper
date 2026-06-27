@@ -1,6 +1,6 @@
 using Newtonsoft.Json;
 
-namespace SilverDasher.Models;
+namespace FateWhisper.Models;
 
 /// <summary>
 /// 版本信息模型，对应 patches.json 中的单条记录。

@@ -1,15 +1,15 @@
 {
-  "Author": "FateWhisper Team (based on SilverDasher)",
+  "Author": "FateWhisper",
   "Name": "FateWhisper",
   "InternalName": "FateWhisper",
-  "AssemblyVersion": "0.2.0.0",
-  "Description": "FF14 跨服猎怪与 FATE 播报插件。消息来源：SilverDasher（ACT 版）MQTT 网络。支持 MQTT 跨服消息订阅、TTS 语音播报、游戏原生 Toast 通知。使用 /fw 或 /fatewhisper 打开。",
+  "AssemblyVersion": "0.3.0.0",
+  "Description": "FF14 跨服猎怪与 FATE 播报插件",
   "ApplicableVersion": "any",
   "DalamudApiLevel": 15,
   "LoadPriority": 0,
-  "Punchline": "跨服猎怪与 FATE 播报 — 源自 SilverDasher",
+  "Punchline": "跨服猎怪与 FATE 播报",
   "PunchoutPackage": null,
   "ImageUrls": [],
   "IconUrl": null,
-  "Tags": ["hunt", "fate", "broadcast", "cross-world", "silverdasher"]
+  "Tags": ["hunt", "fate", "broadcast", "cross-world"]
 }

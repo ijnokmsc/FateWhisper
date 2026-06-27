@@ -2,11 +2,11 @@
 using System.Collections.Generic;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Plugin.Services;
-using SilverDasher.Config;
-using SilverDasher.Models;
-using SilverDasher.Services;
+using FateWhisper.Config;
+using FateWhisper.Models;
+using FateWhisper.Services;
 
-namespace SilverDasher.UI.Tabs;
+namespace FateWhisper.UI.Tabs;
 
 /// <summary>
 /// 通知设置 Tab — ACT 版风格。含逐状态通知开关 + 大区接收选项。
@@ -48,10 +48,6 @@ public class NotificationTab
         ImGui.Separator();
         ImGui.Spacing();
         DrawMiscSettings();
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-        DrawTestButtons();
     }
 
     private void DrawNotificationChannels()
@@ -147,44 +143,29 @@ public class NotificationTab
         ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1.0f), "其他设置");
         ImGui.Spacing();
 
-        var pause = _config.Notification.PauseInDuty;
-        if (ImGui.Checkbox("副本内暂停通知", ref pause))
-        { _config.Notification.PauseInDuty = pause; _config.Save(); }
+        var muteTts = _config.Notification.MuteTtsInDuty;
+        if (ImGui.Checkbox("副本内不播报语音", ref muteTts))
+        { _config.Notification.MuteTtsInDuty = muteTts; _config.Save(); }
 
-        var prefix = _config.Notification.Prefix;
-        ImGui.Text("通知前缀:");
-        ImGui.SameLine();
-        if (ImGui.InputText("##prefix", ref prefix, 64))
-        { _config.Notification.Prefix = prefix; _config.Save(); }
-    }
+        var muteNotif = _config.Notification.MuteNotificationInDuty;
+        if (ImGui.Checkbox("副本内不显示通知", ref muteNotif))
+        { _config.Notification.MuteNotificationInDuty = muteNotif; _config.Save(); }
 
-    private void DrawTestButtons()
-    {
-        ImGui.TextColored(new System.Numerics.Vector4(0.3f, 1.0f, 0.6f, 1.0f), "测试");
+        ImGui.TextDisabled("导航弹窗始终可用（不受上述选项影响）");
+
         ImGui.Spacing();
 
-        if (ImGui.Button("测试聊天框"))
-        {
-            _notification.OnHuntBroadcast(new HuntMessage
-            {
-                Id = 0, Rank = "S", MobName = "S级恶名精英·测试怪",
-                TerritoryName = "拉诺西亚", WorldName = "萌芽池",
-                Health = 100,
-            });
-        }
-
+        var huntPrefix = _config.Notification.HuntPrefix;
+        ImGui.Text("猎怪通知前缀:");
         ImGui.SameLine();
+        if (ImGui.InputText("##hunt_prefix", ref huntPrefix, 64))
+        { _config.Notification.HuntPrefix = huntPrefix; _config.Save(); }
 
-        if (ImGui.Button("测试 Toast"))
-        {
-            _notification.TestToast("S级恶名精英出现在拉诺西亚·萌芽池！");
-        }
-
+        var fatePrefix = _config.Notification.FatePrefix;
+        ImGui.Text("FATE 通知前缀:");
         ImGui.SameLine();
-
-        if (ImGui.Button("测试 TTS"))
-        {
-            _ = _notification.TestTts("S级恶名精英出现在萌芽池");
-        }
+        if (ImGui.InputText("##fate_prefix", ref fatePrefix, 64))
+        { _config.Notification.FatePrefix = fatePrefix; _config.Save(); }
     }
+
 }

@@ -1,6 +1,6 @@
 using Newtonsoft.Json;
 
-namespace SilverDasher.Models;
+namespace FateWhisper.Models;
 
 /// <summary>
 /// 猎怪分组模型，对应 sphunts.json 中的分组结构。

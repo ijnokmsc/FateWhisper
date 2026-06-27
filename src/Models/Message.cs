@@ -1,7 +1,7 @@
 using Newtonsoft.Json;
-using SilverDasher.Services;
+using FateWhisper.Services;
 
-namespace SilverDasher.Models;
+namespace FateWhisper.Models;
 
 /// <summary>
 /// ACT 协议消息基类。

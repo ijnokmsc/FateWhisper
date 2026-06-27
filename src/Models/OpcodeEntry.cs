@@ -1,6 +1,6 @@
 using Newtonsoft.Json;
 
-namespace SilverDasher.Models;
+namespace FateWhisper.Models;
 
 /// <summary>
 /// Opcode 条目模型，对应 opcodes.json 中的单条记录。

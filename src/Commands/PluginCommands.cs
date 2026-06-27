@@ -1,9 +1,9 @@
 using System;
 using Dalamud.Game.Command;
 using Dalamud.Plugin.Services;
-using SilverDasher.UI;
+using FateWhisper.UI;
 
-namespace SilverDasher.Commands;
+namespace FateWhisper.Commands;
 
 /// <summary>
 /// 插件命令管理，注册 /fw /fatewhisper 命令（向下兼容 /sd）。

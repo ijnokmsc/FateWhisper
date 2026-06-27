@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace SilverDasher.Services;
+namespace FateWhisper.Services;
 
 /// <summary>
 /// 纯 C# 实现 Judge/Seal/Weave，不依赖 Weaver.dll。

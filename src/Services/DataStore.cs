@@ -1,9 +1,9 @@
 using System.IO;
 
-namespace SilverDasher.Services;
+namespace FateWhisper.Services;
 
 /// <summary>
-/// SilverDasher 数据常量存储，对齐 ACT 版 DataStorage。
+/// FateWhisper 数据常量存储，对齐 ACT 版 DataStorage。
 /// </summary>
 public static class DataStore
 {

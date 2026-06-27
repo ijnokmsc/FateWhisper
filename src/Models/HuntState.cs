@@ -1,4 +1,4 @@
-namespace SilverDasher.Models;
+namespace FateWhisper.Models;
 
 /// <summary>
 /// 猎怪/FATE 状态枚举，对齐 ACT 版 SilverDasher。

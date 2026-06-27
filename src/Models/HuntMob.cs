@@ -1,6 +1,6 @@
 using Newtonsoft.Json;
 
-namespace SilverDasher.Models;
+namespace FateWhisper.Models;
 
 /// <summary>
 /// 猎怪实体模型，对应 hunt.json / hunts.json 中的单条记录。

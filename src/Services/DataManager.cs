@@ -7,9 +7,9 @@ using System.Threading.Tasks;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Newtonsoft.Json;
-using SilverDasher.Models;
+using FateWhisper.Models;
 
-namespace SilverDasher.Services;
+namespace FateWhisper.Services;
 
 /// <summary>
 /// 静态数据管理器，负责加载本地 JSON 数据文件并提供名称/区域/世界翻译功能。
@@ -435,13 +435,14 @@ public class DataManager : IDisposable
     /// 游戏坐标 → 传输坐标。
     /// ACT 版公式: x = (gamePos * 0.02 + 21.5) * 100
     /// 结果以 int 存储，显示时除以 100。
+    /// 注：Coordinate.Y 存储的是游戏 Z 轴（北-南），不含高度。
     /// </summary>
-    public static Coordinate GamePosToTransmissionCoord(float gameX, float gameY)
+    public static Coordinate GamePosToTransmissionCoord(float gameX, float gameZ)
     {
         return new Coordinate
         {
             X = (int)((gameX * 0.02f + 21.5f) * 100.0),
-            Y = (int)((gameY * 0.02f + 21.5f) * 100.0)
+            Y = (int)((gameZ * 0.02f + 21.5f) * 100.0)
         };
     }
 
@@ -485,6 +486,16 @@ public class DataManager : IDisposable
                 return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// 根据世界 ID 获取大区拼音标签（如 1060 → LuXingNiao）。
+    /// </summary>
+    public string? LookupDcLabel(string worldId)
+    {
+        if (Worlds.TryGetValue(worldId, out var info) && !string.IsNullOrEmpty(info.DcLabel))
+            return info.DcLabel;
+        return null;
     }
 
     /// <summary>

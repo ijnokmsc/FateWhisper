@@ -1,7 +1,7 @@
 using System;
 using Newtonsoft.Json;
 
-namespace SilverDasher.Config;
+namespace FateWhisper.Config;
 
 /// <summary>
 /// 同大区猎怪订阅配置。

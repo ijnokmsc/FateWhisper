@@ -1,4 +1,4 @@
-namespace SilverDasher.Models;
+namespace FateWhisper.Models;
 
 /// <summary>
 /// 认证结果模型，与 ACT 版 SilverDasher 协议一致。

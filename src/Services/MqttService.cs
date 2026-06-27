@@ -8,9 +8,10 @@ using MQTTnet.Client;
 using MQTTnet.Protocol;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using SilverDasher.Models;
+using FateWhisper.Config;
+using FateWhisper.Models;
 
-namespace SilverDasher.Services;
+namespace FateWhisper.Services;
 
 /// <summary>
 /// MQTT 通信服务，基于 MQTTnet 4.x 管理 WebSocket+TLS 连接。
@@ -21,6 +22,7 @@ public class MqttService : IDisposable
 {
     private readonly IPluginLog _log;
     private readonly DataManager _dataManager;
+    private readonly PluginConfig _config;
     private IMqttClient? _mqttClient;
     private MqttClientOptions? _mqttOptions;
     private readonly string _brokerUrl;
@@ -56,13 +58,32 @@ public class MqttService : IDisposable
         }
     }
 
-    public MqttService(IPluginLog log, DataManager dataManager, string brokerUrl, string mqttUsername, string mqttPassword)
+    public MqttService(IPluginLog log, DataManager dataManager, PluginConfig config, string brokerUrl, string mqttUsername, string mqttPassword)
     {
         _log = log;
         _dataManager = dataManager;
+        _config = config;
         _brokerUrl = brokerUrl;
         _mqttUsername = mqttUsername;
         _mqttPassword = mqttPassword;
+
+        // 从配置恢复大区标签（持久化确保重启后立即可用）
+        _playerDcLabel = config.PlayerDcLabel ?? "";
+        if (!string.IsNullOrEmpty(_playerDcLabel))
+            _log.Information($"{Prefix} 从配置恢复玩家大区: {_playerDcLabel}");
+    }
+
+    private string _playerDcLabel;
+
+    /// <summary>
+    /// 更新玩家所在大区标签（如 LuXingNiao），用于跨大区判断。
+    /// </summary>
+    public void UpdatePlayerDc(string? dcLabel)
+    {
+        _playerDcLabel = dcLabel ?? "";
+        _config.PlayerDcLabel = _playerDcLabel;  // 持久化到配置
+        _config.Save();
+        _log.Information($"{Prefix} 玩家大区: {_playerDcLabel}");
     }
 
     public void UpdateCredentials(string username, string password)
@@ -97,7 +118,7 @@ public class MqttService : IDisposable
                     AllowUntrustedCertificates = true
                 })
                 .WithCredentials(_mqttUsername, _mqttPassword)
-                .WithClientId($"SilverDasher_{Guid.NewGuid():N}"[..23])
+                .WithClientId($"FateWhisper_{Guid.NewGuid():N}"[..23])
                 .WithCleanSession(false)
                 .WithKeepAlivePeriod(TimeSpan.FromSeconds(30));
 
@@ -271,7 +292,8 @@ public class MqttService : IDisposable
             var topic = args.ApplicationMessage.Topic;
             var payload = Encoding.UTF8.GetString(args.ApplicationMessage.PayloadSegment);
 
-            _log.Debug($"{Prefix} MQTT 收到消息 topic={topic} len={payload.Length}");
+            if (_config.Debug.MqttMessages)
+                _log.Debug($"{Prefix} MQTT 收到消息 topic={topic} len={payload.Length} payload={payload}");
 
             // 解析 Topic: {dc_label}/{world_label}/{type}/{id}
             var segments = topic.Split('/');
@@ -283,6 +305,27 @@ public class MqttService : IDisposable
             var msgIdStr = segments[3];
 
             if (!int.TryParse(msgIdStr, out var msgId)) return Task.CompletedTask;
+
+            // 跨大区判断：Topic 的 DC 标签与玩家所在 DC 不同则为跨大区
+            // 若 _playerDcLabel 未初始化（首次安装 WorldId=0），从 config 实时查询
+            var playerDc = !string.IsNullOrEmpty(_playerDcLabel)
+                ? _playerDcLabel
+                : _dataManager.LookupDcLabel(_config.WorldId.ToString()) ?? "";
+            var isCrossDc = !string.IsNullOrEmpty(playerDc) &&
+                !string.Equals(dcLabel, playerDc, StringComparison.OrdinalIgnoreCase);
+
+            // Debug 日志：帮助排查跨大区过滤问题
+            if (_config.Debug.MqttMessages)
+                _log.Debug($"{Prefix} [DC过滤] topicDC={dcLabel} playerDC={playerDc} isCrossDc={isCrossDc} storedDcLabel='{_playerDcLabel}'");
+
+            // 持久化：如果这次从 config 查询到了有效的 playerDc，且 _playerDcLabel 为空，则更新
+            if (string.IsNullOrEmpty(_playerDcLabel) && !string.IsNullOrEmpty(playerDc))
+            {
+                _playerDcLabel = playerDc;
+                _config.PlayerDcLabel = playerDc;
+                _config.Save();
+                _log.Information($"{Prefix} 从消息处理中自动检测到玩家大区: {playerDc}");
+            }
 
             // 解析 JSON payload
             var json = JObject.Parse(payload);
@@ -318,11 +361,13 @@ public class MqttService : IDisposable
                     TerritoryName = territoryName,
                     WorldName = worldName,
                     Datacenter = dcLabel,
+                    IsCrossDc = isCrossDc,
                     Rank = _dataManager.LookupHuntRank(msgIdStr),
                     MobName = _dataManager.LookupHuntName(msgIdStr),
                 };
 
-                _log.Information($"{Prefix} 猎怪播报触发: id={msgId} hp={hp}% map={map} ({territoryName})");
+                if (_config.Debug.HuntTriggers)
+                    _log.Information($"{Prefix} 猎怪播报触发: id={msgId} hp={hp}% map={map} ({territoryName}) world={worldName} dc={dcLabel} crossDc={isCrossDc}");
                 HuntReceived?.Invoke(huntMsg);
             }
             else if (msgType == "fate")
@@ -340,12 +385,14 @@ public class MqttService : IDisposable
                     TerritoryName = territoryName,
                     WorldName = worldName,
                     Datacenter = dcLabel,
+                    IsCrossDc = isCrossDc,
                     FateName = _dataManager.LookupFateName(msgIdStr),
                     IsSpecial = _dataManager.IsFateSpecial(msgIdStr),
                     EventType = progress >= 100 ? "end" : (progress == 0 ? "start" : "progress"),
                 };
 
-                _log.Information($"{Prefix} FATE 播报触发: id={msgId} progress={progress}% map={map} ({territoryName})");
+                if (_config.Debug.FateTriggers)
+                    _log.Information($"{Prefix} FATE 播报触发: id={msgId} progress={progress}% map={map} ({territoryName}) world={worldName} dc={dcLabel} crossDc={isCrossDc} special={fateMsg.IsSpecial}");
                 FateReceived?.Invoke(fateMsg);
             }
         }
@@ -392,7 +439,7 @@ public class MqttService : IDisposable
                                 AllowUntrustedCertificates = true
                             })
                             .WithCredentials(_mqttUsername, _mqttPassword)
-                            .WithClientId($"SilverDasher_{Guid.NewGuid():N}"[..23])
+                            .WithClientId($"FateWhisper_{Guid.NewGuid():N}"[..23])
                             .WithCleanSession(false)
                             .WithKeepAlivePeriod(TimeSpan.FromSeconds(30))
                             .Build();

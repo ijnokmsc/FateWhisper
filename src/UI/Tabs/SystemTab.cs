@@ -1,11 +1,11 @@
-﻿using System;
+using System;
 using System.Threading.Tasks;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Plugin.Services;
-using SilverDasher.Config;
-using SilverDasher.Services;
+using FateWhisper.Config;
+using FateWhisper.Services;
 
-namespace SilverDasher.UI.Tabs;
+namespace FateWhisper.UI.Tabs;
 
 /// <summary>
 /// 系统状态 Tab，显示 MQTT 连接状态、数据版本、玩家信息，并提供操作按钮。
@@ -17,6 +17,7 @@ public class SystemTab
     private readonly DataManager _dataManager;
     private readonly MqttService _mqttService;
     private readonly DutyMonitor _dutyMonitor;
+    private readonly NavigationService _navigationService;
     private const string Prefix = "[FateWhisper]";
 
     public SystemTab(
@@ -24,13 +25,15 @@ public class SystemTab
         IPluginLog log,
         DataManager dataManager,
         MqttService mqttService,
-        DutyMonitor dutyMonitor)
+        DutyMonitor dutyMonitor,
+        NavigationService navigationService)
     {
         _config = config;
         _log = log;
         _dataManager = dataManager;
         _mqttService = mqttService;
         _dutyMonitor = dutyMonitor;
+        _navigationService = navigationService;
     }
 
     public void Draw()
@@ -43,6 +46,8 @@ public class SystemTab
         DrawDataStatus();
         ImGui.Spacing();
         DrawPlayerInfo();
+        ImGui.Spacing();
+        DrawCrossServerStatus();
         ImGui.Spacing();
         DrawActionButtons();
     }
@@ -89,6 +94,22 @@ public class SystemTab
         var pWorldId = _dutyMonitor.HomeWorldId > 0 ? _dutyMonitor.HomeWorldId : _config.WorldId;
         ImGui.Text($"  当前玩家: {pName}@{pWorld} (WorldID={pWorldId})");
         ImGui.Text($"  副本中={_dutyMonitor.IsInDuty} | 区域={_dutyMonitor.TerritoryType}");
+    }
+
+    private void DrawCrossServerStatus()
+    {
+        ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1.0f), "跨服插件状态:");
+        var lifeColor = _navigationService.IsLifestreamAvailable
+            ? new System.Numerics.Vector4(0.0f, 1.0f, 0.0f, 1.0f)
+            : new System.Numerics.Vector4(1.0f, 0.3f, 0.3f, 1.0f);
+        var dcColor = _navigationService.IsDCTravelerAvailable
+            ? new System.Numerics.Vector4(0.0f, 1.0f, 0.0f, 1.0f)
+            : new System.Numerics.Vector4(1.0f, 0.3f, 0.3f, 1.0f);
+        ImGui.Text($"  Lifestream: "); ImGui.SameLine();
+        ImGui.TextColored(lifeColor, _navigationService.LifestreamStatus);
+        ImGui.Text($"  DCTraveler: "); ImGui.SameLine();
+        ImGui.TextColored(dcColor, _navigationService.DCTravelerStatus);
+        ImGui.Text($"  DCTraveler 已启用: {_config.CrossServer.UseDCTraveler}");
     }
 
     private void DrawActionButtons()

@@ -3,9 +3,9 @@ using System.Runtime.InteropServices;
 using Dalamud.Hooking;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
-using SilverDasher.Models;
+using FateWhisper.Models;
 
-namespace SilverDasher.Services;
+namespace FateWhisper.Services;
 
 /// <summary>
 /// 网络包拦截服务，通过 Dalamud Hook 机制监听 FF14 网络包以检测本地猎怪/FATE 事件。

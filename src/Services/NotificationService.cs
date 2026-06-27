@@ -1,14 +1,14 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Dalamud.Game.Gui.Toast;
 using Dalamud.Interface.ImGuiNotification;
 using Dalamud.Plugin.Services;
-using SilverDasher.Config;
-using SilverDasher.Models;
-using SilverDasher.UI;
+using FateWhisper.Config;
+using FateWhisper.Models;
+using FateWhisper.UI;
 
-namespace SilverDasher.Services;
+namespace FateWhisper.Services;
 
 /// <summary>
 /// 通知服务 — ChatLog + 游戏 Toast + TTS 语音。
@@ -23,23 +23,27 @@ public class NotificationService : IDisposable
     private readonly DataManager _dataManager;
     private readonly DutyMonitor _dutyMonitor;
     private readonly PluginConfig _config;
+    private readonly SubscriptionsStore _subs;
     private readonly TtsService _tts;
-    private Action<string, LogLevel>? _onLog;
+    // 导航日志回调：只在推送到导航面板时触发，携带格式化文本和原始消息
+    private Action<string, HuntMessage?, FateMessage?>? _onNavLog;
     private const string Prefix = "[FateWhisper]";
 
-    // 去重缓存: key="{type}-{id}-{state}" → timestamp (Unix ms)
-    private readonly Dictionary<string, long> _lastNotified = new();
-    private const int DedupCooldownMs = 30000; // 同状态 30 秒内不重复推送
+    // 状态跟踪表: key="{type}-{id}" → 上次通知的状态
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, HuntState> _trackedStates = new();
 
     public event Action<HuntMessage>? HuntNavigationPopupRequested;
     public event Action<FateMessage>? FateNavigationPopupRequested;
 
-    public void SetLogCallback(Action<string, LogLevel>? callback) => _onLog = callback;
+    /// <summary>
+    /// 设置导航日志回调。当消息推送到导航面板时触发。
+    /// </summary>
+    public void SetNavLogCallback(Action<string, HuntMessage?, FateMessage?>? callback) => _onNavLog = callback;
 
     public NotificationService(
         IPluginLog log, IChatGui chatGui, IToastGui toastGui,
         INotificationManager notifManager, DataManager dataManager,
-        DutyMonitor dutyMonitor, PluginConfig config)
+        DutyMonitor dutyMonitor, PluginConfig config, SubscriptionsStore subsStore)
     {
         _log = log;
         _chatGui = chatGui;
@@ -48,27 +52,43 @@ public class NotificationService : IDisposable
         _dataManager = dataManager;
         _dutyMonitor = dutyMonitor;
         _config = config;
+        _subs = subsStore;
         _tts = new TtsService();
     }
 
+    /// <summary>
+    /// MQTT 猎怪消息处理管线：
+    /// 大区过滤 → 订阅过滤 → 去重 → 副本过滤 → 通知 + 导航弹窗
+    /// </summary>
     public void OnHuntBroadcast(HuntMessage message)
     {
         try
         {
-            if (_config.Notification.PauseInDuty && _dutyMonitor.IsInDuty)
-                return;
-
             int mobId = message.Id;
 
-            // 检查订阅列表：用户必须勾选了该猎怪才推送
-            if (_config.HuntSubscriptions.Count > 0 && !_config.HuntSubscriptions.Contains(mobId))
-                return;
-
-            // 跨大区/同大区过滤
+            // ═══ 第1层：大区接收选项过滤 ═══
             if (message.IsCrossDc)
             { if (!_config.Notification.CrossDCHunt) return; }
             else
             { if (!_config.Notification.CrossWorldHunt) return; }
+
+            // ═══ 第2层：订阅管理过滤 ═══
+            if (mobId > 0 && !_subs.IsHuntSubscribed(mobId))
+                return;
+
+            // ═══ 第3层：重复消息过滤（状态机去重） ═══
+            var state = DataManager.GetHuntState(message.Health);
+            var trackKey = $"hunt-{mobId}";
+            if (_trackedStates.TryGetValue(trackKey, out var lastState))
+            {
+                if (state == lastState) { _log.Debug($"{Prefix} [去重] {trackKey} 状态未变 ({state})，跳过"); return; }
+                _trackedStates[trackKey] = state;
+            }
+            else { _trackedStates[trackKey] = state; }
+            if (state == HuntState.Died) _trackedStates.TryRemove(trackKey, out _);
+
+            // ═══ 第4层：副本状态过滤 ═══
+            var isInDuty = _dutyMonitor.IsInDuty;
 
             // 补齐名称/Rank
             var mobName = _dataManager.LookupHuntName(message.MobId);
@@ -78,23 +98,22 @@ public class NotificationService : IDisposable
                 message.Rank = _dataManager.LookupHuntRank(message.MobId);
             if (string.IsNullOrEmpty(message.TerritoryName))
                 message.TerritoryName = _dataManager.LookupTerritoryName(message.Territory);
-
-            // 确定状态并去重
-            var state = DataManager.GetHuntState(message.Health);
-            var dedupKey = $"hunt-{mobId}-{GetStateKey(state)}";
-            if (!IsDedupPass(dedupKey)) return;
+            if (string.IsNullOrEmpty(message.WorldName))
+                message.WorldName = _dataManager.LookupWorldName(message.World.ToString());
 
             // 格式化文本
             var crossTag = message.IsCrossDc ? "[跨大区] " : "";
             var rankColor = GetRankColor(message.Rank);
             var displayWorld = message.WorldName ?? message.World.ToString();
-            var text = $"{crossTag}{rankColor}[{message.Rank}] {message.MobName} {PrefixSplit} {message.TerritoryName}({displayWorld})";
+            var stateTag = GetStateTag(state);
+            var text = $"{crossTag}{rankColor}{stateTag}[{message.Rank}] {message.MobName} {PrefixSplit} {message.TerritoryName}({displayWorld})";
 
-            SendNotification(text, state);
+            SendNotification(_config.Notification.HuntPrefix, text, state);
             _log.Information($"{Prefix} 猎怪: {text}");
 
-            if (!_dutyMonitor.IsInDuty)
-                HuntNavigationPopupRequested?.Invoke(message);
+            // 导航弹窗始终触发（不受副本限制）
+            HuntNavigationPopupRequested?.Invoke(message);
+            _onNavLog?.Invoke(text, message, null);
         }
         catch (Exception ex)
         {
@@ -102,42 +121,62 @@ public class NotificationService : IDisposable
         }
     }
 
+    /// <summary>
+    /// MQTT FATE 消息处理管线：
+    /// 大区过滤 → 类型/订阅过滤 → 去重 → 副本过滤 → 通知 + 导航弹窗
+    /// </summary>
     public void OnFateBroadcast(FateMessage message)
     {
         try
         {
-            if (_config.Notification.PauseInDuty && _dutyMonitor.IsInDuty)
-                return;
-
             int fateId = message.Id;
 
-            // 检查订阅列表
-            if (_config.FateSubscriptions.Count > 0 && !_config.FateSubscriptions.Contains(fateId))
-                return;
+            // ═══ 第1层：大区接收选项过滤 ═══
+            if (message.IsCrossDc)
+            { if (!_config.Notification.CrossDCHunt) return; }
+            else
+            { if (!_config.Notification.CrossWorldHunt) return; }
 
+            // ═══ 第2层：FATE 类型 + 订阅管理过滤 ═══
             if (!_config.Notification.FateEnabled) return;
             if (message.IsSpecial && !_config.Notification.FateSpecial) return;
             if (!message.IsSpecial && !_config.Notification.FateCommon) return;
+            if (fateId > 0 && !_subs.IsFateSubscribed(fateId))
+                return;
+
+            // ═══ 第3层：重复消息过滤（状态机去重） ═══
+            var state = DataManager.GetFateState(message.Progress);
+            var trackKey = $"fate-{fateId}";
+            if (_trackedStates.TryGetValue(trackKey, out var lastState))
+            {
+                if (state == lastState) { _log.Debug($"{Prefix} [去重] {trackKey} 状态未变 ({state})，跳过"); return; }
+                _trackedStates[trackKey] = state;
+            }
+            else { _trackedStates[trackKey] = state; }
+            if (state == HuntState.Died) _trackedStates.TryRemove(trackKey, out _);
+
+            // ═══ 第4层：副本状态过滤 ═══
+            var isInDuty = _dutyMonitor.IsInDuty;
 
             // 补齐名称
             if (string.IsNullOrEmpty(message.FateName))
                 message.FateName = _dataManager.LookupFateName(message.FateId);
             if (string.IsNullOrEmpty(message.TerritoryName))
                 message.TerritoryName = _dataManager.LookupTerritoryName(message.Territory);
-
-            var state = DataManager.GetFateState(message.Progress);
-            var dedupKey = $"fate-{fateId}-{GetStateKey(state)}";
-            if (!IsDedupPass(dedupKey)) return;
+            if (string.IsNullOrEmpty(message.WorldName))
+                message.WorldName = _dataManager.LookupWorldName(message.World.ToString());
 
             var specialTag = message.IsSpecial ? "[特殊] " : "";
             var displayWorld = message.WorldName ?? message.World.ToString();
-            var text = $"{specialTag}FATE: {message.FateName} {PrefixSplit} {message.TerritoryName}({displayWorld})";
+            var stateTag = GetStateTag(state);
+            var text = $"{specialTag}{stateTag}FATE: {message.FateName} {PrefixSplit} {message.TerritoryName}({displayWorld})";
 
-            SendNotification(text, state);
+            SendNotification(_config.Notification.FatePrefix, text, state);
             _log.Information($"{Prefix} {text}");
 
-            if (!_dutyMonitor.IsInDuty)
-                FateNavigationPopupRequested?.Invoke(message);
+            // 导航弹窗始终触发（不受副本限制）
+            FateNavigationPopupRequested?.Invoke(message);
+            _onNavLog?.Invoke(text, null, message);
         }
         catch (Exception ex)
         {
@@ -145,28 +184,23 @@ public class NotificationService : IDisposable
         }
     }
 
-    /// <summary>去重检查：同 key 在冷却期内返回 false</summary>
-    private bool IsDedupPass(string key)
+    private void SendNotification(string typePrefix, string text, HuntState state)
     {
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (_lastNotified.TryGetValue(key, out var last) && (now - last) < DedupCooldownMs)
-            return false;
-        _lastNotified[key] = now;
-        return true;
-    }
-
-    private void SendNotification(string text, HuntState state)
-    {
-        var fullText = $"{_config.Notification.Prefix} {text}";
+        var fullText = $"{typePrefix} {text}";
         var stateKey = GetStateKey(state);
+        var isInDuty = _dutyMonitor.IsInDuty;
 
-        if (_config.Notification.ChatLogEnabled)
+        // ChatLog：副本内根据 MuteNotificationInDuty 决定
+        if (_config.Notification.ChatLogEnabled &&
+            !(isInDuty && _config.Notification.MuteNotificationInDuty))
         {
             try { _chatGui.Print(fullText); }
             catch (Exception ex) { _log.Warning($"{Prefix} ChatLog 失败: {ex.Message}"); }
         }
 
+        // Toast：副本内根据 MuteNotificationInDuty 决定
         if (_config.Notification.ToastEnabled &&
+            !(isInDuty && _config.Notification.MuteNotificationInDuty) &&
             _config.Notification.ToastStates.TryGetValue(stateKey, out var toastOk) && toastOk)
         {
             try { _toastGui.ShowNormal(fullText); }
@@ -178,7 +212,9 @@ public class NotificationService : IDisposable
             }
         }
 
+        // TTS：副本内根据 MuteTtsInDuty 决定
         if (_config.Notification.TtsEnabled &&
+            !(isInDuty && _config.Notification.MuteTtsInDuty) &&
             _config.Notification.TtsStates.TryGetValue(stateKey, out var ttsOk) && ttsOk)
         {
             var ttsText = fullText.Replace("★", "").Replace("●", "").Replace("○", "").Replace("→", ",");
@@ -189,7 +225,7 @@ public class NotificationService : IDisposable
 
     public void TestToast(string text)
     {
-        var fullText = $"{_config.Notification.Prefix} {text}";
+        var fullText = $"{_config.Notification.HuntPrefix} {text}";
         try { _toastGui.ShowNormal(fullText); }
         catch (Exception ex)
         {
@@ -200,7 +236,7 @@ public class NotificationService : IDisposable
 
     public async Task TestTts(string text)
     {
-        await _tts.SpeakAsync($"{_config.Notification.Prefix} {text}");
+        await _tts.SpeakAsync($"{_config.Notification.HuntPrefix} {text}");
     }
 
     private static string GetStateKey(HuntState state) => state switch
@@ -210,6 +246,15 @@ public class NotificationService : IDisposable
         HuntState.Dying => "dying",
         HuntState.Died => "died",
         _ => "healthy"
+    };
+
+    private static string GetStateTag(HuntState state) => state switch
+    {
+        HuntState.Healthy => "🟢",
+        HuntState.Taunted => "🟡",
+        HuntState.Dying   => "🟠",
+        HuntState.Died    => "💀",
+        _ => ""
     };
 
     private static string GetRankColor(string? rank)

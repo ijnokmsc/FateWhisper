@@ -4,14 +4,15 @@ using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
-using SilverDasher.Config;
-using SilverDasher.Services;
-using SilverDasher.UI.Tabs;
+using FateWhisper.Config;
+using FateWhisper.Models;
+using FateWhisper.Services;
+using FateWhisper.UI.Tabs;
 
-namespace SilverDasher.UI;
+namespace FateWhisper.UI;
 
 /// <summary>
-/// ImGui 主窗口，包含 4 个功能 Tab。
+/// ImGui 主窗口，包含 6 个功能 Tab。
 /// </summary>
 public class MainWindow : Window, IDisposable
 {
@@ -20,6 +21,11 @@ public class MainWindow : Window, IDisposable
     private readonly DataManager _dataManager;
     private readonly MqttService _mqttService;
     private readonly DutyMonitor _dutyMonitor;
+    private readonly NavigationService _navigationService;
+    private readonly NavigationWindow _navigationWindow;
+    private readonly NavigationTestTab _navTestTab;
+    private readonly DebugTab _debugTab;
+    private readonly IObjectTable _objectTable;
 
     private readonly HuntTab _huntTab;
     private readonly FateTab _fateTab;
@@ -27,11 +33,12 @@ public class MainWindow : Window, IDisposable
     private readonly SystemTab _systemTab;
     private int _activeTab;
 
-    // 通知日志
+    // 通知日志（多线程读写需加锁）
     private readonly List<LogEntry> _notificationLog = new();
+    private readonly object _logLock = new();
     private const int MaxLogEntries = 200;
 
-    private const string Prefix = "[SilverDasher]";
+    private const string Prefix = "[FateWhisper]";
 
     private static string GetVersionString()
     {
@@ -55,7 +62,11 @@ public class MainWindow : Window, IDisposable
         DataManager dataManager,
         MqttService mqttService,
         DutyMonitor dutyMonitor,
-        NotificationService notificationService)
+        NotificationService notificationService,
+        NavigationService navigationService,
+        NavigationWindow navigationWindow,
+        IObjectTable objectTable,
+        SubscriptionsStore subsStore)
         : base($"FateWhisper {GetVersionString()}##FateWhisperMainWindow")
     {
         _log = log;
@@ -63,6 +74,9 @@ public class MainWindow : Window, IDisposable
         _dataManager = dataManager;
         _mqttService = mqttService;
         _dutyMonitor = dutyMonitor;
+        _navigationService = navigationService;
+        _navigationWindow = navigationWindow;
+        _objectTable = objectTable;
 
         SizeConstraints = new WindowSizeConstraints
         {
@@ -70,13 +84,16 @@ public class MainWindow : Window, IDisposable
             MaximumSize = new Vector2(800, 700)
         };
 
-        _huntTab = new HuntTab(config, dataManager, log);
-        _fateTab = new FateTab(config, dataManager, log);
+        _huntTab = new HuntTab(config, dataManager, log, subsStore);
+        _fateTab = new FateTab(config, dataManager, log, subsStore);
         _notificationTab = new NotificationTab(config, log, notificationService);
         _systemTab = new SystemTab(
-            config, log, dataManager, mqttService, dutyMonitor);
+            config, log, dataManager, mqttService, dutyMonitor, _navigationService);
+        _navTestTab = new NavigationTestTab(_navigationService, _config, _navigationWindow, _objectTable);
+        _debugTab = new DebugTab(config, log, _mqttService, _navigationService, notificationService);
 
         IsOpen = config.WindowVisible;
+        _activeTab = Math.Clamp(config.ActiveTab, 0, 6);
         _log.Information($"{Prefix} 主窗口已初始化");
     }
 
@@ -102,14 +119,16 @@ public class MainWindow : Window, IDisposable
     /// </summary>
     private void DrawTabBar()
     {
-        if (ImGui.BeginTabBar("SilverDasherTabs"))
+        if (ImGui.BeginTabBar("FateWhisperTabs"))
         {
-            string[] tabNames = { "猎怪", "FATE", "通知", "系统", "日志" };
+            string[] tabNames = { "猎怪", "FATE", "通知", "系统", "导航测试", "调试", "日志" };
             for (var i = 0; i < tabNames.Length; i++)
             {
                 if (ImGui.BeginTabItem($"{tabNames[i]}##tab{i}"))
                 {
                     _activeTab = i;
+                    _config.ActiveTab = i;
+                    _config.Save();
                     ImGui.EndTabItem();
                 }
             }
@@ -138,6 +157,12 @@ public class MainWindow : Window, IDisposable
                 _systemTab.Draw();
                 break;
             case 4:
+                _navTestTab.Draw();
+                break;
+            case 5:
+                _debugTab.Draw();
+                break;
+            case 6:
                 DrawLogTab();
                 break;
             default:
@@ -170,20 +195,33 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// 绘制日志 Tab 内容。
+    /// 绘制日志 Tab 内容。仅记录推送到导航面板的消息，双击可重新弹出导航窗口。
     /// </summary>
     private void DrawLogTab()
     {
-        if (ImGui.SmallButton("清空") && _notificationLog.Count > 0)
-            _notificationLog.Clear();
+        if (ImGui.SmallButton("清空"))
+        {
+            lock (_logLock) _notificationLog.Clear();
+        }
         ImGui.SameLine();
-        ImGui.TextDisabled($"（共 {_notificationLog.Count} 条，上限 {MaxLogEntries}）");
+
+        int logCount;
+        List<LogEntry> snapshot;
+        lock (_logLock)
+        {
+            logCount = _notificationLog.Count;
+            snapshot = new List<LogEntry>(_notificationLog);
+        }
+
+        ImGui.TextDisabled($"（共 {logCount} 条，双击可重新打开导航）");
         ImGui.Separator();
 
         var availHeight = ImGui.GetContentRegionAvail().Y;
         ImGui.BeginChild("LogContent", new Vector2(0, availHeight), true);
-        foreach (var entry in _notificationLog)
+
+        for (var i = 0; i < snapshot.Count; i++)
         {
+            var entry = snapshot[i];
             var color = entry.Level switch
             {
                 LogLevel.Success => new Vector4(0.3f, 0.9f, 0.3f, 1f),
@@ -191,21 +229,49 @@ public class MainWindow : Window, IDisposable
                 LogLevel.Error   => new Vector4(0.9f, 0.3f, 0.2f, 1f),
                 _                => new Vector4(0.85f, 0.85f, 0.85f, 1f)
             };
+
+            // 导航目标条目用高亮色
+            if (entry.HasNavigationTarget)
+            {
+                color = new Vector4(0.3f, 0.85f, 1.0f, 1f);
+            }
+
+            ImGui.PushID(i);
             ImGui.TextColored(color, $"[{entry.Time:HH:mm:ss}] {entry.Message}");
+
+            // 双击检测
+            if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left) && entry.HasNavigationTarget)
+            {
+                if (entry.HuntMessage is not null)
+                    _navigationWindow.ShowForHunt(entry.HuntMessage);
+                else if (entry.FateMessage is not null)
+                    _navigationWindow.ShowForFate(entry.FateMessage);
+            }
+
+            // 悬停提示
+            if (entry.HasNavigationTarget && ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("双击重新打开导航窗口");
+            }
+            ImGui.PopID();
         }
-        if (_notificationLog.Count > 0)
+
+        if (logCount > 0)
             ImGui.SetScrollHereY(1.0f);
         ImGui.EndChild();
     }
 
     /// <summary>
-    /// 添加一条通知日志（线程安全）。
+    /// 添加一条导航日志（线程安全）。仅在消息推送到导航面板时调用。
     /// </summary>
-    public void AddLog(string message, LogLevel level = LogLevel.Info)
+    public void AddNavigationLog(string message, HuntMessage? huntMsg = null, FateMessage? fateMsg = null)
     {
-        _notificationLog.Add(new LogEntry(DateTime.Now, message, level));
-        while (_notificationLog.Count > MaxLogEntries)
-            _notificationLog.RemoveAt(0);
+        lock (_logLock)
+        {
+            _notificationLog.Add(new LogEntry(DateTime.Now, message, LogLevel.Info, huntMsg, fateMsg));
+            while (_notificationLog.Count > MaxLogEntries)
+                _notificationLog.RemoveAt(0);
+        }
     }
 
     /// <summary>
@@ -230,11 +296,18 @@ public sealed class LogEntry
     public DateTime Time { get; }
     public string Message { get; }
     public LogLevel Level { get; }
+    public HuntMessage? HuntMessage { get; }
+    public FateMessage? FateMessage { get; }
 
-    public LogEntry(DateTime time, string message, LogLevel level)
+    public bool HasNavigationTarget => HuntMessage is not null || FateMessage is not null;
+
+    public LogEntry(DateTime time, string message, LogLevel level,
+        HuntMessage? huntMsg = null, FateMessage? fateMsg = null)
     {
         Time = time;
         Message = message;
         Level = level;
+        HuntMessage = huntMsg;
+        FateMessage = fateMsg;
     }
 }

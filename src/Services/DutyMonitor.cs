@@ -1,7 +1,7 @@
 using System;
 using Dalamud.Plugin.Services;
 
-namespace SilverDasher.Services;
+namespace FateWhisper.Services;
 
 /// <summary>
 /// 副本状态监测服务，基于 ClientState.TerritoryType 检测副本状态变化。
@@ -12,7 +12,7 @@ public class DutyMonitor : IDisposable
     private readonly IClientState _clientState;
     private readonly IPluginLog _log;
     private bool _wasInDuty;
-    private const string Prefix = "[SilverDasher]";
+    private const string Prefix = "[FateWhisper]";
     /// <summary>
     /// 副本区域 ID 最小值（>= 此值视为副本/实例）。
     /// </summary>

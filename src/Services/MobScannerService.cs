@@ -5,9 +5,9 @@ using System.Linq;
 using System.Numerics;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
-using SilverDasher.Models;
+using FateWhisper.Models;
 
-namespace SilverDasher.Services;
+namespace FateWhisper.Services;
 
 /// <summary>
 /// 猎怪扫描服务 — IObjectTable 等效 ACT 版 Negotiator.ScanMobs。

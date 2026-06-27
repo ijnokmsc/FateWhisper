@@ -1,10 +1,11 @@
 using System;
+using System.Linq;
 using System.Text.Json.Serialization;
 using Dalamud.Configuration;
 using Dalamud.Plugin;
 using Newtonsoft.Json;
 
-namespace SilverDasher.Config;
+namespace FateWhisper.Config;
 
 /// <summary>
 /// 插件主配置类，实现 IPluginConfiguration 接口。
@@ -71,16 +72,45 @@ public class PluginConfig : IPluginConfiguration
     public uint WorldId { get; set; }
 
     /// <summary>
+    /// 角色 ContentId（用于 DCTraveler 跨服传送）。
+    /// </summary>
+    [JsonProperty("content_id")]
+    [System.Text.Json.Serialization.JsonIgnore]
+    public ulong ContentId { get; set; }
+
+    /// <summary>
     /// 大区名称。
     /// </summary>
     [JsonProperty("datacenter")]
     public string Datacenter { get; set; } = "";
+
+    /// <summary>玩家大区标签（用于跨大区判断），持久化以避免登录前 MQTT 消息误判</summary>
+    [JsonProperty("player_dc_label")]
+    public string PlayerDcLabel { get; set; } = "";
 
     /// <summary>
     /// 主窗口是否可见。
     /// </summary>
     [JsonProperty("window_visible")]
     public bool WindowVisible { get; set; } = false;
+
+    /// <summary>
+    /// 上次选中的 Tab 索引。
+    /// </summary>
+    [JsonProperty("active_tab")]
+    public int ActiveTab { get; set; } = 0;
+
+    /// <summary>
+    /// 调试开关配置。
+    /// </summary>
+    [JsonProperty("debug")]
+    public DebugConfig Debug { get; set; } = new();
+
+    /// <summary>
+    /// 跨服导航配置。
+    /// </summary>
+    [JsonProperty("cross_server")]
+    public CrossServerConfig CrossServer { get; set; } = new();
 
     /// <summary>
     /// 上次使用的 MQTT 用户名。
@@ -94,19 +124,12 @@ public class PluginConfig : IPluginConfiguration
     [JsonProperty("mqtt_password")]
     public string? MqttPassword { get; set; }
 
-    // ===== ACT 版风格订阅管理 =====
-
     /// <summary>
-    /// 已订阅的猎怪 ID 列表（ACT 版兼容）。
+    /// 导航测试保存的地点列表（内存中管理，持久化到独立文件）。
     /// </summary>
-    [JsonProperty("hunt_subs")]
-    public List<int> HuntSubscriptions { get; set; } = [];
-
-    /// <summary>
-    /// 已订阅的 FATE ID 列表（ACT 版兼容）。
-    /// </summary>
-    [JsonProperty("fate_subs")]
-    public List<int> FateSubscriptions { get; set; } = [];
+    [Newtonsoft.Json.JsonIgnore]
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<Models.NavTestLocation> NavTestLocations { get; set; } = [];
 
     /// <summary>
     /// 初始化配置实例并从持久化存储加载。
@@ -134,6 +157,8 @@ public class PluginConfig : IPluginConfiguration
         WorldName = "";
         Datacenter = "";
         WindowVisible = false;
+        Debug = new();
+        CrossServer = new();
     }
 
     /// <summary>
@@ -141,14 +166,15 @@ public class PluginConfig : IPluginConfiguration
     /// </summary>
     public void Save()
     {
-        if (_pluginInterface is null) return;
+        if (_pluginInterface is null) { System.Diagnostics.Debug.WriteLine("[FateWhisper] Save: _pluginInterface is null"); return; }
         try
         {
             _pluginInterface.SavePluginConfig(this);
+            System.Diagnostics.Debug.WriteLine($"[FateWhisper] Save: 主配置已保存");
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[SilverDasher] 配置保存失败: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[FateWhisper] 配置保存失败: {ex.Message}");
         }
     }
 
@@ -164,11 +190,48 @@ public class PluginConfig : IPluginConfiguration
             var saved = _pluginInterface.GetPluginConfig() as PluginConfig;
             if (saved is null) return;
             CopyFrom(saved);
+            System.Diagnostics.Debug.WriteLine($"[FateWhisper] LoadSafe: CopyFrom 完成");
+
+            // 加载导航测试地点列表
+            LoadNavTestLocations();
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[SilverDasher] 配置加载失败，使用默认值: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[FateWhisper] 配置加载失败，使用默认值: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// 保存导航测试地点列表到独立文件。
+    /// </summary>
+    public void SaveNavTestLocations()
+    {
+        try
+        {
+            var configDir = _pluginInterface.ConfigDirectory;
+            if (configDir is null) return;
+            var path = System.IO.Path.Combine(configDir.FullName, "FateWhisper_navtest.json");
+            System.IO.File.WriteAllText(path, Newtonsoft.Json.JsonConvert.SerializeObject(NavTestLocations));
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// 从独立文件加载导航测试地点列表。
+    /// </summary>
+    public void LoadNavTestLocations()
+    {
+        try
+        {
+            var configDir = _pluginInterface.ConfigDirectory;
+            if (configDir is null) return;
+            var path = System.IO.Path.Combine(configDir.FullName, "FateWhisper_navtest.json");
+            if (!System.IO.File.Exists(path)) return;
+            var raw = System.IO.File.ReadAllText(path);
+            var list = Newtonsoft.Json.JsonConvert.DeserializeObject<List<Models.NavTestLocation>>(raw);
+            if (list != null) NavTestLocations = list;
+        }
+        catch { }
     }
 
     /// <summary>
@@ -184,21 +247,65 @@ public class PluginConfig : IPluginConfiguration
             CWHunt = saved.CWHunt ?? new CWHuntConfig();
             CDCHunt = saved.CDCHunt ?? new CDCHuntConfig();
             CWFate = saved.CWFate ?? new CWFateConfig();
-            Notification = saved.Notification ?? new NotificationConfig();
+            Notification = new NotificationConfig();
+            if (saved.Notification is not null)
+                Notification.CopyFrom(saved.Notification);
             AuthToken = saved.AuthToken;
             CharacterName = saved.CharacterName ?? "";
             WorldName = saved.WorldName ?? "";
             WorldId = saved.WorldId;
+            ContentId = saved.ContentId;
             Datacenter = saved.Datacenter ?? "";
+            PlayerDcLabel = saved.PlayerDcLabel ?? "";
             WindowVisible = saved.WindowVisible;
             MqttUsername = saved.MqttUsername;
             MqttPassword = saved.MqttPassword;
-            HuntSubscriptions = saved.HuntSubscriptions ?? [];
-            FateSubscriptions = saved.FateSubscriptions ?? [];
+            System.Diagnostics.Debug.WriteLine($"[FateWhisper] CopyFrom: 配置复制完成");
+            ActiveTab = saved.ActiveTab;
+            Debug = saved.Debug ?? new DebugConfig();
+            CrossServer = saved.CrossServer ?? new CrossServerConfig();
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[SilverDasher] 配置复制失败: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[FateWhisper] 配置复制失败: {ex.Message}");
         }
     }
+}
+
+/// <summary>
+/// 调试开关配置。
+/// </summary>
+[Serializable]
+public class DebugConfig
+{
+    [JsonProperty("mqtt_messages")]
+    public bool MqttMessages { get; set; } = false;
+
+    [JsonProperty("hunt_triggers")]
+    public bool HuntTriggers { get; set; } = false;
+
+    [JsonProperty("fate_triggers")]
+    public bool FateTriggers { get; set; } = false;
+
+    [JsonProperty("navigation")]
+    public bool Navigation { get; set; } = false;
+}
+
+/// <summary>
+/// 跨服导航配置。
+/// </summary>
+[Serializable]
+public class CrossServerConfig
+{
+    /// <summary>
+    /// 是否允许使用 DCTraveler 跨DC（默认禁用，国服崩溃风险）。
+    /// </summary>
+    [JsonProperty("use_dc_traveler")]
+    public bool UseDCTraveler { get; set; } = false;
+
+    /// <summary>
+    /// 是否优先使用 Lifestream（默认开启）。
+    /// </summary>
+    [JsonProperty("prefer_lifestream")]
+    public bool PreferLifestream { get; set; } = true;
 }
