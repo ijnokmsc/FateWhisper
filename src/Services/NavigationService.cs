@@ -1,8 +1,12 @@
 using System;
 using System.Linq;
 using System.Numerics;
+using Dalamud.Game.Chat;
 using Dalamud.Game.ClientState;
 using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.ClientState.Fates;
+using Dalamud.Game.Text;
+using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -46,16 +50,13 @@ public class NavigationService : IDisposable
     private const string IpcDRUnloadModule = "DailyRoutines.UnloadModule";
     private const string ModuleFastWorldTravel = "FastWorldTravel";
 
-    // DCTraveler IPC（跨大区传送）
-    private const string IpcDCTravelerTravel = "DCTravelerX.Travel";
-    private const string IpcDCTravelerIsValid = "DCTravelerX.IsValid";
-
+    private readonly IFateTable _fateTable;
+    private readonly IChatGui _chatGui;
     private bool _vnavmeshAvailable;
     private bool _lifestreamAvailable;
     private bool _dailyRoutinesAvailable;
     private bool _fastWorldTravelWasEnabled;
     private bool _fastWorldTravelNotified;
-    private bool _dcTravelerAvailable;
     private bool _isNavigating;
 
     public event Action<bool>? NavigationStateChanged;
@@ -63,9 +64,7 @@ public class NavigationService : IDisposable
 
     public bool IsVnavmeshAvailable => _vnavmeshAvailable;
     public bool IsLifestreamAvailable => _lifestreamAvailable;
-    public bool IsDCTravelerAvailable => _dcTravelerAvailable;
     public string LifestreamStatus => _lifestreamAvailable ? "可用" : "不可用";
-    public string DCTravelerStatus => _dcTravelerAvailable ? "可用（注意：国服可能崩溃）" : "不可用";
 
     public bool IsNavigating
     {
@@ -115,7 +114,7 @@ public class NavigationService : IDisposable
     };
 
     // Navigation step state machine
-    private enum NavStep { Idle, CrossServer, TeleportToTerritory, WaitAfterTeleport, MountThenNavigate }
+    private enum NavStep { Idle, CrossServer, TeleportToTerritory, WaitAfterTeleport, WaitForFate, MountThenNavigate }
 
     private NavStep _navStep;
     private string _navTargetWorld = "";
@@ -123,6 +122,8 @@ public class NavigationService : IDisposable
     private Vector3 _navTargetPos;
     private bool _navTargetFly;
     private uint _navLastTerritory;
+    private string _navTargetFateName = "";
+    private string _navTargetHuntName = "";
 
     // Mount wait
     private bool _pendingMountNav;
@@ -134,6 +135,8 @@ public class NavigationService : IDisposable
     private int _navCompleteFrames; // 导航完成后确认帧数（防瞬时误判）
     private const int MaxNavRetries = 60;
     private const int NavRetryFeedbackThreshold = 15; // 超过此数时向用户显示等待状态
+    private DateTime _fateLookupStartTime;
+    private const int FateLookupTimeoutSeconds = 30; // FATE 查找超时
 
     // Teleport retry
     private DateTime _teleportStartTime;
@@ -152,7 +155,7 @@ public class NavigationService : IDisposable
 
     // Post-teleport wait
     private int _postTeleportWaitFrames;
-    private const int PostTeleportFrameDelay = 15; // 约 0.25 秒等待位置稳定
+    private const int PostTeleportFrameDelay = 30; // 约 0.5 秒等待位置稳定
 
     // ==================== Constructor / Dispose ====================
 
@@ -160,7 +163,7 @@ public class NavigationService : IDisposable
         IDalamudPluginInterface pluginInterface, IPluginLog log,
         IClientState clientState, ICondition condition, IFramework framework,
         IDataManager dataManager, DataManager fateDataManager, PluginConfig config, string playerWorldName,
-        IObjectTable objectTable)
+        IObjectTable objectTable, IChatGui chatGui, IFateTable fateTable)
     {
         _pluginInterface = pluginInterface;
         _log = log;
@@ -172,11 +175,13 @@ public class NavigationService : IDisposable
         _config = config;
         _playerWorldName = playerWorldName;
         _objectTable = objectTable;
+        _chatGui = chatGui;
+        _fateTable = fateTable;
         DetectVnavmesh();
         DetectDailyRoutines();
-        DetectDCTraveler();
-        DetectLifestream(); // 跨大区传送（同大区跨服走 Lifestream）
+        DetectLifestream(); // 跨服传送统一走 Lifestream
 
+        _chatGui.ChatMessage += OnChatMessage;
         _frameworkHandler = OnFrameworkUpdate;
         _framework.Update += _frameworkHandler;
         _clientState.ZoneInit += OnZoneInit;
@@ -189,12 +194,12 @@ public class NavigationService : IDisposable
     {
         DetectVnavmesh();
         DetectLifestream();
-        DetectDCTraveler();
-        _log.Information($"{Prefix} 插件重新检测完成: vnavmesh={_vnavmeshAvailable}, lifestream={_lifestreamAvailable}, dcTraveler={_dcTravelerAvailable}");
+        _log.Information($"{Prefix} 插件重新检测完成: vnavmesh={_vnavmeshAvailable}, lifestream={_lifestreamAvailable}");
     }
 
     public void Dispose()
     {
+        _chatGui.ChatMessage -= OnChatMessage;
         if (_frameworkHandler != null)
         {
             _framework.Update -= _frameworkHandler;
@@ -304,61 +309,6 @@ public class NavigationService : IDisposable
         catch { }
     }
 
-    private void DetectDCTraveler()
-    {
-        try
-        {
-            _ = _pluginInterface.GetIpcSubscriber<bool>(IpcDCTravelerIsValid);
-            _dcTravelerAvailable = true;
-            _log.Information($"{Prefix} DCTraveler IPC connected（仅用于跨大区）");
-        }
-        catch
-        {
-            _dcTravelerAvailable = false;
-        }
-    }
-
-    private bool ChangeWorldViaDCTraveler(string targetWorldName)
-    {
-        try
-        {
-            if (!_dcTravelerAvailable) return false;
-            var isValid = _pluginInterface.GetIpcSubscriber<bool>(IpcDCTravelerIsValid).InvokeFunc();
-            if (!isValid) return false;
-
-            var sheet = _dataManager.GetExcelSheet<Lumina.Excel.Sheets.World>();
-            var targetWorldId = 0;
-            foreach (var w in sheet)
-            {
-                if (string.Equals(w.Name.ToString(), targetWorldName, StringComparison.OrdinalIgnoreCase))
-                { targetWorldId = (int)w.RowId; break; }
-            }
-            if (targetWorldId <= 0) return false;
-
-            var player = _objectTable.LocalPlayer;
-            if (player == null) return false;
-            var currentWorldId = (int)player.CurrentWorld.RowId;
-
-            ulong contentId = 0;
-            unsafe
-            {
-                var chara = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)player.Address;
-                if (chara != null) contentId = chara->ContentId;
-            }
-            if (contentId == 0 || string.IsNullOrEmpty(_config.CharacterName)) return false;
-
-            _log.Information($"{Prefix} DCTraveler（跨大区）: curWorld={currentWorldId} target={targetWorldId}");
-            _pluginInterface.GetIpcSubscriber<int, int, ulong, bool, string, Task<Exception?>>(IpcDCTravelerTravel)
-                .InvokeFunc(currentWorldId, targetWorldId, contentId, false, _config.CharacterName);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _log.Error($"{Prefix} DCTraveler error: {ex.Message}");
-            return false;
-        }
-    }
-
     private void DetectLifestream()
     {
         try
@@ -465,6 +415,8 @@ public class NavigationService : IDisposable
         NavDebug($"Hunt: {msg.MobName} w={msg.WorldName} t={msg.Territory}");
         if (!_vnavmeshAvailable) return SetError("vnavmesh not available");
         CancelNavigation();
+        _navTargetHuntName = msg.MobName ?? "";
+        _navTargetFateName = "";
         var w = msg.WorldName ?? msg.World.ToString();
         var tt = TryParseTerritory(msg.Territory);
         var pos = CoordToGamePos(msg.Coordinate);
@@ -486,6 +438,8 @@ public class NavigationService : IDisposable
         NavDebug($"Fate: {msg.FateName} w={msg.WorldName} t={msg.Territory}");
         if (!_vnavmeshAvailable) return SetError("vnavmesh not available");
         CancelNavigation();
+        _navTargetFateName = msg.FateName ?? "";
+        _navTargetHuntName = "";
         var w = msg.WorldName ?? msg.World.ToString();
         var tt = TryParseTerritory(msg.Territory);
         var pos = CoordToGamePos(msg.Coordinate);
@@ -509,61 +463,22 @@ public class NavigationService : IDisposable
         {
             var isSameDc = IsSameDatacenter(_navTargetWorld);
 
-            if (isSameDc)
+            // ========== 跨服 → 统一走 Lifestream（不再区分同DC/跨DC） ==========
+            TryManageFastWorldTravel(true);
+            if (!_lifestreamAvailable) DetectLifestream();
+            if (_lifestreamAvailable)
             {
-                // ========== 同DC跨服 → Lifestream（安全，不受 DCTraveler hook 影响） ==========
-                TryManageFastWorldTravel(true);
-                if (!_lifestreamAvailable) DetectLifestream();
-                if (_lifestreamAvailable)
+                NavDebug($"Cross-server: {_playerWorldName} → {_navTargetWorld}, using Lifestream (isSameDc={isSameDc})");
+                var ok = ChangeWorld(_navTargetWorld);
+                if (ok)
                 {
-                    NavDebug($"Same-DC cross-world: {_playerWorldName} → {_navTargetWorld}, using Lifestream");
-                    var ok = ChangeWorld(_navTargetWorld);
-                    if (ok)
-                    {
-                        _navStep = NavStep.CrossServer;
-                        _crossServerStartTime = DateTime.Now;
-                        StatusMessageChanged?.Invoke($"Lifestream → {_navTargetWorld}...");
-                        return $"跨服中: Lifestream → {_navTargetWorld}";
-                    }
+                    _navStep = NavStep.CrossServer;
+                    _crossServerStartTime = DateTime.Now;
+                    StatusMessageChanged?.Invoke($"Lifestream → {_navTargetWorld}...");
+                    return $"跨服中: Lifestream → {_navTargetWorld}";
                 }
-                TryManageFastWorldTravel(false);
-                // 同DC但 Lifestream 不可用/失败
-                NavDebug($"Same-DC, Lifestream unavailable or failed");
             }
-            else
-            {
-                // ========== 跨DC → DCTraveler（用户期望的跨DC方式） ==========
-                if (_dcTravelerAvailable && _config.CrossServer.UseDCTraveler)
-                {
-                    NavDebug($"Cross-DC: {_navTargetWorld}, using DCTraveler");
-                    if (ChangeWorldViaDCTraveler(_navTargetWorld))
-                    {
-                        _navStep = NavStep.CrossServer;
-                        _crossServerStartTime = DateTime.Now;
-                        StatusMessageChanged?.Invoke($"DCTraveler 跨DC → {_navTargetWorld}...");
-                        return $"跨DC中: DCTraveler → {_navTargetWorld}";
-                    }
-                    NavDebug($"DCTraveler failed");
-                }
-
-                // DCTraveler 不可用/失败，尝试 Lifestream（但用户应注意冲突风险）
-                TryManageFastWorldTravel(true);
-                if (!_lifestreamAvailable) DetectLifestream();
-                if (_lifestreamAvailable)
-                {
-                    NavDebug($"Cross-DC: DCTraveler unavailable/disabled, falling back to Lifestream");
-                    _log.Warning($"{Prefix} 跨DC {_navTargetWorld} 使用 Lifestream（可能与 DCTraveler 冲突）");
-                    var ok = ChangeWorld(_navTargetWorld);
-                    if (ok)
-                    {
-                        _navStep = NavStep.CrossServer;
-                        _crossServerStartTime = DateTime.Now;
-                        StatusMessageChanged?.Invoke($"Lifestream 跨DC → {_navTargetWorld}（⚠ 注意冲突）...");
-                        return $"跨DC中: Lifestream → {_navTargetWorld}（⚠ 注意冲突）";
-                    }
-                }
-                TryManageFastWorldTravel(false);
-            }
+            TryManageFastWorldTravel(false);
 
             // 全部失败，提示手动
             _log.Warning($"{Prefix} 跨服失败（isSameDc={isSameDc}），请手动跨服");
@@ -590,6 +505,16 @@ public class NavigationService : IDisposable
             var prompt = $"Territory {_navTargetTerritory} != {CurrentTerritoryType}, teleport manually";
             NavigateToAetheryte(CurrentTerritoryType); StatusMessageChanged?.Invoke(prompt); return prompt;
         }
+        // 已到达目标区域 — FATE 导航先等待 IFateTable 定位，猎怪直接导航
+        if (!string.IsNullOrEmpty(_navTargetFateName))
+        {
+            _navStep = NavStep.WaitForFate;
+            _fateLookupStartTime = DateTime.Now;
+            StatusMessageChanged?.Invoke("寻找 FATE...");
+            NavDebug($"同区域到达，开始等待 IFateTable 加载目标 FATE");
+            return $"寻找 FATE: {_navTargetFateName}";
+        }
+        TryLookupFatePosition(); // 猎怪或其他非 FATE 导航
         return ExecuteFinalNavigation(label);
     }
 
@@ -597,14 +522,17 @@ public class NavigationService : IDisposable
     {
         _navStep = NavStep.MountThenNavigate; _navRetryCount = 0;
         NavDebug($"Final nav: {label} pos={_navTargetPos} fly={_navTargetFly}");
+        // 先发送初始状态消息，NavigateTo 内部会根据实际情况更新（Mounting/vnavmesh等待等）
+        var s = $"Navigating: {label}"; StatusMessageChanged?.Invoke(s);
         NavigateTo(_navTargetTerritory, _navTargetPos, _navTargetFly);
-        var s = $"Navigating: {label}"; StatusMessageChanged?.Invoke(s); return s;
+        return s;
     }
 
     public void CancelNavigation()
     {
         _navStep = NavStep.Idle; _pendingMountNav = false;
         _navRetryCount = 0; _teleportRetryCount = 0;
+        _navTargetFateName = ""; _navTargetHuntName = "";
         if (_fastWorldTravelWasEnabled)
             TryManageFastWorldTravel(false);
         if (_vnavmeshAvailable)
@@ -630,11 +558,12 @@ public class NavigationService : IDisposable
             case NavStep.CrossServer:          TickCrossServer(); break;
             case NavStep.TeleportToTerritory:  TickTeleportToTerritory(); break;
             case NavStep.WaitAfterTeleport:    TickWaitAfterTeleport(); break;
+            case NavStep.WaitForFate:          TickWaitForFate(); break;
             case NavStep.MountThenNavigate:    TickMountThenNavigate(); break;
         }
         
-        // 导航完成检测：vnavmesh 停止后延迟确认（避免刚启动就被判定为完成）
-        if (IsNavigating && _navStep != NavStep.CrossServer && _navStep != NavStep.TeleportToTerritory)
+        // 导航完成检测：只在 vnavmesh 已成功启动且自主运行时检测（排除所有过渡状态）
+        if (IsNavigating && _navStep == NavStep.Idle)
         {
             if (!CheckIsRunning())
             {
@@ -669,6 +598,8 @@ public class NavigationService : IDisposable
                 string.Equals(currentWorld, _navTargetWorld, StringComparison.OrdinalIgnoreCase))
             {
                 _log.Information($"{Prefix} ZoneInit 确认世界变更: {currentWorld}，继续导航");
+                TryManageFastWorldTravel(false);
+                _playerWorldName = currentWorld;
                 _navStep = NavStep.Idle;
                 ContinueToTerritoryCheck("post-warp");
             }
@@ -687,6 +618,7 @@ public class NavigationService : IDisposable
             if (IsServerMatch(_navTargetWorld))
             {
                 _log.Information($"{Prefix} Lifestream 忙但世界已变更，继续导航");
+                TryManageFastWorldTravel(false);
                 _navStep = NavStep.Idle;
                 ContinueToTerritoryCheck("post-warp");
             }
@@ -705,6 +637,7 @@ public class NavigationService : IDisposable
             return;
         }
         _navStep = NavStep.Idle;
+        TryManageFastWorldTravel(false);
         ContinueToTerritoryCheck("post-warp");
     }
 
@@ -754,8 +687,72 @@ public class NavigationService : IDisposable
             _postTeleportWaitFrames--;
             return;
         }
-        _navStep = NavStep.Idle;
-        ExecuteFinalNavigation("post-teleport");
+        // 传送后位置稳定，进入 FATE 查找等待阶段（或直接导航猎怪）
+        if (!string.IsNullOrEmpty(_navTargetFateName))
+        {
+            _navStep = NavStep.WaitForFate;
+            _fateLookupStartTime = DateTime.Now;
+            StatusMessageChanged?.Invoke("寻找 FATE...");
+            NavDebug("传送完成，开始等待 IFateTable 加载目标 FATE");
+        }
+        else
+        {
+            _navStep = NavStep.Idle;
+            ExecuteFinalNavigation("post-teleport");
+        }
+    }
+
+    /// <summary>
+    /// 等待 IFateTable 中出现目标 FATE，获取精确坐标后再导航。
+    /// 传送后 IFateTable 可能尚未加载目标 FATE，需要持续轮询直到出现或超时。
+    /// </summary>
+    private void TickWaitForFate()
+    {
+        if (string.IsNullOrEmpty(_navTargetFateName))
+        {
+            // 没有目标 FATE 名称（猎怪导航等），直接进入导航
+            _navStep = NavStep.Idle;
+            ExecuteFinalNavigation("post-teleport");
+            return;
+        }
+
+        var elapsed = (DateTime.Now - _fateLookupStartTime).TotalSeconds;
+        if (elapsed > FateLookupTimeoutSeconds)
+        {
+            NavDebug($"FATE 查找超时 ({elapsed:F1}s)，使用 MQTT/备用坐标继续导航");
+            _navStep = NavStep.Idle;
+            ExecuteFinalNavigation("post-teleport (FATE未定位)");
+            return;
+        }
+
+        // 尝试从 IFateTable 查找目标 FATE
+        try
+        {
+            for (var i = 0; i < _fateTable.Length; i++)
+            {
+                var fate = _fateTable[i];
+                if (fate == null) continue;
+                if (!string.Equals(fate.Name.ToString(), _navTargetFateName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                // FATE 存在于当前区域（任何状态都有 Position）
+                var fatePos = fate.Position;
+                NavDebug($"IFateTable 找到目标 FATE '{_navTargetFateName}' pos={fatePos} state={fate.State} radius={fate.Radius}");
+                _navTargetPos = fatePos;
+                _navTargetFly = CanFly(_navTargetTerritory);
+                _navStep = NavStep.Idle;
+                ExecuteFinalNavigation("FATE 定位成功");
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            NavDebug($"IFateTable lookup error: {ex.Message}");
+        }
+
+        // 每 5 秒反馈一次等待状态
+        if ((int)elapsed % 5 == 0 && (int)elapsed > 0)
+            StatusMessageChanged?.Invoke($"等待 FATE 加载... ({elapsed:F0}s)");
     }
 
     private void TickMountThenNavigate()
@@ -800,9 +797,12 @@ public class NavigationService : IDisposable
             return;
         }
 
-        if (!CheckVnavmeshReady()) { IsNavigating = false; StatusMessageChanged?.Invoke("vnavmesh not ready"); return; }
+        // 不在此处检查 vnavmesh 就绪 — 传送后 vnavmesh 需时间加载新地图，
+        // ExecuteVnavmeshNavigation 自带 _navRetryCount 重试机制（最多60次）会处理此情况
         pos = SnapToNavmeshFloor(pos);
+        _navTargetPos = pos; // 保存修正后的坐标，供 TickMountThenNavigate 重试使用
         if (fly && !CanFly(CurrentTerritoryType)) { NavDebug("No flight here"); fly = false; }
+        _navTargetFly = fly; // 保存修正后的飞行参数，供重试使用
         if (fly && !IsMounted())
         {
             if (TryMount()) { _pendingMountNav = true; _mountStartTime = DateTime.Now; StatusMessageChanged?.Invoke("Mounting..."); return; }
@@ -832,11 +832,25 @@ public class NavigationService : IDisposable
             NavDebug($"vnavmesh move: pos={pos} fly={fly} started={started}");
             if (!started)
             {
-                _log.Warning($"{Prefix} vnavmesh returned false"); _navStep = NavStep.Idle;
-                IsNavigating = false; StatusMessageChanged?.Invoke("Path not found");
+                // vnavmesh 暂时无法寻路（传送后位置不稳定、navmesh 未加载等），走重试机制而非直接终止
+                _navRetryCount++;
+                NavDebug($"vnavmesh MoveTo failed ({_navRetryCount}/{MaxNavRetries}), retrying...");
+                if (_navRetryCount >= MaxNavRetries)
+                {
+                    _log.Warning($"{Prefix} vnavmesh path not found after {MaxNavRetries} retries");
+                    _navStep = NavStep.Idle;
+                    IsNavigating = false; StatusMessageChanged?.Invoke("Path not found");
+                }
+                // 飞行寻路失败过半 → 降级为地面导航
+                else if (fly && _navRetryCount > MaxNavRetries / 2)
+                {
+                    NavDebug("降级为地面导航");
+                    _navTargetFly = false;
+                }
                 return;
             }
             _navRetryCount = 0; IsNavigating = true;
+            _navStep = NavStep.Idle; // vnavmesh 已成功启动，状态机转入 Idle（不再需要 TickMountThenNavigate）
             _log.Information($"{Prefix} vnavmesh: territory={territoryType} pos={pos} fly={fly}");
         }
         catch (Exception ex)
@@ -851,6 +865,70 @@ public class NavigationService : IDisposable
                 IsNavigating = false; StatusMessageChanged?.Invoke("vnavmesh unavailable");
             }
         }
+    }
+
+    // ==================== FATE position lookup ====================
+
+    /// <summary>
+    /// 到达目标区域后，尝试从 IFateTable 查找目标 FATE 的实时位置，
+    /// 如果找到则用 fate.Position 替代 MQTT 坐标（更精确）。
+    /// </summary>
+    private void TryLookupFatePosition()
+    {
+        if (string.IsNullOrEmpty(_navTargetFateName)) return;
+
+        try
+        {
+            for (var i = 0; i < _fateTable.Length; i++)
+            {
+                var fate = _fateTable[i];
+                if (fate == null) continue;
+
+                if (string.Equals(fate.Name.ToString(), _navTargetFateName, StringComparison.OrdinalIgnoreCase))
+                {
+                    // 接受任何状态的 FATE（传送后 FATE 可能还在准备中），只要有坐标就导航
+                    // 注意：FateState 枚举值在不同版本可能不同，不做状态过滤
+                    var fatePos = fate.Position;
+                    NavDebug($"IFateTable 找到目标 FATE '{_navTargetFateName}' pos={fatePos} state={fate.State} radius={fate.Radius}");
+                    _navTargetPos = fatePos;
+                    _navTargetFly = CanFly(_navTargetTerritory);
+                    return;
+                }
+            }
+            NavDebug($"IFateTable 未找到目标 FATE '{_navTargetFateName}'（可能尚未加载到游戏内），保持原坐标");
+        }
+        catch (Exception ex)
+        {
+            NavDebug($"IFateTable lookup error: {ex.Message}");
+        }
+    }
+
+    // ==================== Chat message monitoring ====================
+
+    /// <summary>
+    /// 监听系统聊天消息，在跨服导航中检测世界变更（补充 ZoneInit 的延迟检测）。
+    /// </summary>
+    private void OnChatMessage(IHandleableChatMessage message)
+    {
+        // 仅处理跨服导航中收到的系统消息
+        if (_navStep != NavStep.CrossServer) return;
+        if (message.LogKind != XivChatType.SystemMessage && message.LogKind != XivChatType.SystemError) return;
+
+        var msgText = message.Message.ToString();
+        // 尝试从消息中匹配世界名
+        try
+        {
+            foreach (var (worldId, info) in _fateDataManager.Worlds)
+            {
+                if (msgText.Contains(info.Name))
+                {
+                    _playerWorldName = info.Name;
+                    NavDebug($"聊天消息检测到世界: {info.Name}");
+                    return;
+                }
+            }
+        }
+        catch { }
     }
 
     // ==================== Utilities ====================
@@ -901,7 +979,7 @@ public class NavigationService : IDisposable
             _navLastTerritory = cur;
             return StartNavChain($"Test: {targetWorld} territory={territory}");
         }
-        if (territory == cur) { NavigateTo(territory, pos, fly); return IsNavigating ? $"Nav: ({pos.X:F1},{pos.Y:F1},{pos.Z:F1}) fly={fly}" : "Failed"; }
+        if (territory == cur) { _navStep = NavStep.MountThenNavigate; _navRetryCount = 0; NavigateTo(territory, pos, fly); return IsNavigating ? $"Nav: ({pos.X:F1},{pos.Y:F1},{pos.Z:F1}) fly={fly}" : "Failed"; }
         CancelNavigation();
         _navTargetWorld = string.IsNullOrEmpty(targetWorld) ? _playerWorldName : targetWorld;
         _navTargetTerritory = territory; _navTargetPos = pos; _navTargetFly = fly; _navLastTerritory = cur;

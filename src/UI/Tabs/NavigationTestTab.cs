@@ -342,7 +342,7 @@ public class NavigationTestTab
         else
         {
             ImGui.TextDisabled("Lifestream 未安装或已被禁用，跨服功能不可用");
-            ImGui.TextDisabled("如需跨服导航，请安装 Lifestream 或使用 DCTraveler");
+            ImGui.TextDisabled("如需跨服导航，请安装 Lifestream");
         }
     }
 

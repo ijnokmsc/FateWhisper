@@ -72,13 +72,6 @@ public class PluginConfig : IPluginConfiguration
     public uint WorldId { get; set; }
 
     /// <summary>
-    /// 角色 ContentId（用于 DCTraveler 跨服传送）。
-    /// </summary>
-    [JsonProperty("content_id")]
-    [System.Text.Json.Serialization.JsonIgnore]
-    public ulong ContentId { get; set; }
-
-    /// <summary>
     /// 大区名称。
     /// </summary>
     [JsonProperty("datacenter")]
@@ -254,7 +247,6 @@ public class PluginConfig : IPluginConfiguration
             CharacterName = saved.CharacterName ?? "";
             WorldName = saved.WorldName ?? "";
             WorldId = saved.WorldId;
-            ContentId = saved.ContentId;
             Datacenter = saved.Datacenter ?? "";
             PlayerDcLabel = saved.PlayerDcLabel ?? "";
             WindowVisible = saved.WindowVisible;
@@ -297,12 +289,6 @@ public class DebugConfig
 [Serializable]
 public class CrossServerConfig
 {
-    /// <summary>
-    /// 是否允许使用 DCTraveler 跨DC（默认禁用，国服崩溃风险）。
-    /// </summary>
-    [JsonProperty("use_dc_traveler")]
-    public bool UseDCTraveler { get; set; } = false;
-
     /// <summary>
     /// 是否优先使用 Lifestream（默认开启）。
     /// </summary>

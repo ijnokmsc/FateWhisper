@@ -102,14 +102,8 @@ public class SystemTab
         var lifeColor = _navigationService.IsLifestreamAvailable
             ? new System.Numerics.Vector4(0.0f, 1.0f, 0.0f, 1.0f)
             : new System.Numerics.Vector4(1.0f, 0.3f, 0.3f, 1.0f);
-        var dcColor = _navigationService.IsDCTravelerAvailable
-            ? new System.Numerics.Vector4(0.0f, 1.0f, 0.0f, 1.0f)
-            : new System.Numerics.Vector4(1.0f, 0.3f, 0.3f, 1.0f);
         ImGui.Text($"  Lifestream: "); ImGui.SameLine();
         ImGui.TextColored(lifeColor, _navigationService.LifestreamStatus);
-        ImGui.Text($"  DCTraveler: "); ImGui.SameLine();
-        ImGui.TextColored(dcColor, _navigationService.DCTravelerStatus);
-        ImGui.Text($"  DCTraveler 已启用: {_config.CrossServer.UseDCTraveler}");
     }
 
     private void DrawActionButtons()

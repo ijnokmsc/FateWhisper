@@ -141,20 +141,6 @@ public class DebugTab
             lifeOk ? new System.Numerics.Vector4(0.3f, 1f, 0.3f, 1f) : new System.Numerics.Vector4(1f, 0.3f, 0.3f, 1f),
             lifeOk ? "已连接" : "未安装");
 
-        ImGui.SameLine();
-        ImGui.Text("| DCTraveler: ");
-        ImGui.SameLine();
-        var dcOk = _navigationService.IsDCTravelerAvailable;
-        ImGui.TextColored(
-            dcOk ? new System.Numerics.Vector4(0.3f, 1f, 0.3f, 1f) : new System.Numerics.Vector4(1f, 0.3f, 0.3f, 1f),
-            dcOk ? "已连接" : "未安装");
-
-        if (dcOk)
-        {
-            ImGui.SameLine();
-            ImGui.TextColored(new System.Numerics.Vector4(1f, 0.5f, 0.3f, 1f), "⚠ 国服可能崩溃");
-        }
-
         ImGui.Spacing();
 
         // 运行状态
@@ -174,14 +160,6 @@ public class DebugTab
         ImGui.Separator();
         ImGui.TextColored(new System.Numerics.Vector4(0.3f, 0.8f, 1.0f, 1.0f), "跨服配置");
         ImGui.Spacing();
-
-        var useDcTraveler = _config.CrossServer.UseDCTraveler;
-        if (ImGui.Checkbox("允许使用 DCTraveler 跨DC（⚠️ 国服可能崩溃）", ref useDcTraveler))
-        {
-            _config.CrossServer.UseDCTraveler = useDcTraveler;
-            _config.Save();
-            _log.Information($"[FateWhisper] 跨服配置 UseDCTraveler = {useDcTraveler}");
-        }
 
         var preferLifestream = _config.CrossServer.PreferLifestream;
         if (ImGui.Checkbox("优先使用 Lifestream", ref preferLifestream))
@@ -204,15 +182,14 @@ public class DebugTab
 
         // 传送诊断说明
         ImGui.TextDisabled("传送决策逻辑:");
-        ImGui.BulletText("同DC跨服 → Lifestream /li <世界名>（安全，不受 DCTraveler 影响）");
-        ImGui.BulletText("跨DC → DCTraveler（优先，需手动开启）；失败回退 Lifestream");
+        ImGui.BulletText("跨服 → 统一走 Lifestream /li <世界名>（安全，支持同DC和跨DC）");
         ImGui.BulletText("全部失败 → 提示手动跨服");
 
-        if (!lifeOk && !dcOk)
+        if (!lifeOk)
         {
             ImGui.Spacing();
             ImGui.TextColored(new System.Numerics.Vector4(1f, 0.5f, 0.3f, 1f),
-                "⚠ Lifestream 和 DCTraveler 均未安装，跨服导航将提示手动操作");
+                "⚠ Lifestream 未安装，跨服导航将提示手动操作");
         }
     }
 
