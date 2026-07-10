@@ -11,12 +11,9 @@ public class DutyMonitor : IDisposable
 {
     private readonly IClientState _clientState;
     private readonly IPluginLog _log;
+    private readonly DataManager _dataManager;
     private bool _wasInDuty;
     private const string Prefix = "[FateWhisper]";
-    /// <summary>
-    /// 副本区域 ID 最小值（>= 此值视为副本/实例）。
-    /// </summary>
-    private const uint DutyTerritoryThreshold = 1000;
 
     /// <summary>
     /// 进入副本时触发。
@@ -34,7 +31,9 @@ public class DutyMonitor : IDisposable
     public event Action<bool>? DutyStateChanged;
 
     /// <summary>
-    /// 当前是否在副本中（通过 TerritoryType 判断）。
+    /// 当前是否在副本中。
+    /// 依据 DataManager.IsDutyTerritory（territories.json 的 content 字段判定），
+    /// 比旧的 TerritoryType >= 1000 阈值准确得多。
     /// </summary>
     public bool IsInDuty
     {
@@ -42,7 +41,7 @@ public class DutyMonitor : IDisposable
         {
             try
             {
-                return _clientState.TerritoryType >= DutyTerritoryThreshold;
+                return _dataManager.IsDutyTerritory(_clientState.TerritoryType);
             }
             catch
             {
@@ -87,14 +86,16 @@ public class DutyMonitor : IDisposable
     /// </summary>
     /// <param name="clientState">Dalamud 客户端状态服务。</param>
     /// <param name="log">日志服务。</param>
-    public DutyMonitor(IClientState clientState, IPluginLog log)
+    /// <param name="dataManager">静态数据管理器（提供区域副本判定）。</param>
+    public DutyMonitor(IClientState clientState, IPluginLog log, DataManager dataManager)
     {
         _clientState = clientState;
         _log = log;
+        _dataManager = dataManager;
 
         try
         {
-            _wasInDuty = clientState.TerritoryType >= DutyTerritoryThreshold;
+            _wasInDuty = _dataManager.IsDutyTerritory(clientState.TerritoryType);
         }
         catch
         {
@@ -112,7 +113,7 @@ public class DutyMonitor : IDisposable
         try
         {
             var territoryType = _clientState.TerritoryType;
-            var nowInDuty = territoryType >= DutyTerritoryThreshold;
+            var nowInDuty = _dataManager.IsDutyTerritory(territoryType);
 
             if (nowInDuty != _wasInDuty)
             {

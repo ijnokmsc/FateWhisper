@@ -2,7 +2,7 @@
   "Author": "FateWhisper",
   "Name": "FateWhisper",
   "InternalName": "FateWhisper",
-  "AssemblyVersion": "0.3.1.0",
+  "AssemblyVersion": "0.3.2.0",
   "Description": "FF14 跨服猎怪与 FATE 播报插件（架构重构版）",
   "ApplicableVersion": "any",
   "DalamudApiLevel": 15,

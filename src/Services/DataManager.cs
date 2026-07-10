@@ -335,6 +335,22 @@ public class DataManager : IDisposable
     }
 
     /// <summary>
+    /// 判断指定区域是否为副本/实例内容（用于副本内静音）。
+    /// 依据 territories.json 的 content 字段（对应游戏 ContentFinderCondition）。
+    /// content != 0 ⇒ 该区域链接了副本内容查找器 ⇒ 视为副本。
+    /// 此判定远比旧的 TerritoryType >= 1000 阈值准确：
+    /// 大量真实副本的 ID &lt; 1000（如 142=日影地修炼所、159=放浪神古神殿），
+    /// 旧阈值会漏检这些副本，导致副本内仍收到通知/TTS。
+    /// 未知区域（不在数据中）保守返回 false，不静音，避免误伤野外通知。
+    /// </summary>
+    public bool IsDutyTerritory(uint territoryType)
+    {
+        if (Territories.TryGetValue(territoryType.ToString(), out var info))
+            return info.Content != 0;
+        return false;
+    }
+
+    /// <summary>
     /// 根据 worldId 查找服务器中文名称。
     /// </summary>
     public string LookupWorldName(string worldId)

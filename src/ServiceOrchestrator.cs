@@ -75,9 +75,9 @@ internal sealed class ServiceOrchestrator : IDisposable
         _dataManager = new DataManager(pluginInterface, log);
 
         // ============================================================
-        // 第3步：副本监测
+        // 第3步：副本监测（依赖第2步 DataManager 的区域副本判定）
         // ============================================================
-        _dutyMonitor = new DutyMonitor(Plugin.ClientState, log);
+        _dutyMonitor = new DutyMonitor(Plugin.ClientState, log, _dataManager);
 
         // ============================================================
         // 第4步：MQTT 服务

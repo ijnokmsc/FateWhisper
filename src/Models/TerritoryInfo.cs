@@ -18,4 +18,12 @@ public class TerritoryInfo
     /// </summary>
     [JsonProperty("region")]
     public string Region { get; set; } = "";
+
+    /// <summary>
+    /// 关联的内容查找器 ID（ContentFinderCondition）。
+    /// 对应游戏 TerritoryType 表的 ContentFinderCondition 字段。
+    /// 非 0 表示此区域是副本/实例内容（用于副本内静音判定）。
+    /// </summary>
+    [JsonProperty("content")]
+    public int Content { get; set; }
 }

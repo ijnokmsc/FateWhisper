@@ -29,8 +29,16 @@ public class NotificationService : IDisposable
     private Action<string, HuntMessage?, FateMessage?>? _onNavLog;
     private const string Prefix = "[FateWhisper]";
 
-    // 状态跟踪表: key="{type}-{id}" → 上次通知的状态
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, HuntState> _trackedStates = new();
+    // 状态跟踪表: key="{type}-{id}" → (上次通知的状态, 上次通知时间)
+    // 改为元组以支持"首报锁定 + 冷却窗口"去重（多源异步交错时避免重复播报）。
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (HuntState State, DateTime NotifiedAt)> _trackedStates = new();
+
+    /// <summary>
+    /// 非关键状态（Healthy/Taunted/Dying）的冷却窗口（秒）。
+    /// 同一 {type}-{id} 在窗口内的状态变化将被合并，只保留首次通知。
+    /// 关键状态 Died（击杀/完成）不受冷却限制，确保不漏报。
+    /// </summary>
+    private const int NonCriticalCooldownSeconds = 30;
 
     public event Action<HuntMessage>? HuntNavigationPopupRequested;
     public event Action<FateMessage>? FateNavigationPopupRequested;
@@ -79,17 +87,27 @@ public class NotificationService : IDisposable
             // ═══ 第3层：重复消息过滤（状态机去重） ═══
             var state = DataManager.GetHuntState(message.Health);
             var trackKey = $"hunt-{mobId}";
-            if (_trackedStates.TryGetValue(trackKey, out var lastState))
+            if (_trackedStates.TryGetValue(trackKey, out var last))
             {
-                if (state == lastState) { _log.Debug($"{Prefix} [去重] {trackKey} 状态未变 ({state})，跳过"); return; }
-                _trackedStates[trackKey] = state;
+                // 同状态：始终跳过（原始去重）
+                if (state == last.State) { _log.Debug($"{Prefix} [去重] {trackKey} 状态未变 ({state})，跳过"); return; }
+
+                // 非关键状态在冷却窗口内的变化：合并跳过（多源异步交错时防重复播报）
+                if (state != HuntState.Died &&
+                    (DateTime.UtcNow - last.NotifiedAt).TotalSeconds < NonCriticalCooldownSeconds)
+                {
+                    _log.Debug($"{Prefix} [去重] {trackKey} 冷却期内状态变化 ({last.State}→{state})，跳过");
+                    return;
+                }
+
+                _trackedStates[trackKey] = (state, DateTime.UtcNow);
             }
-            else { _trackedStates[trackKey] = state; }
-            if (state == HuntState.Died) _trackedStates.TryRemove(trackKey, out _);
+            else { _trackedStates[trackKey] = (state, DateTime.UtcNow); }
+            // 注意：Died 时不移除键，否则 HuntVanished(同样映射为 Died) 会在约 6 秒后
+            // 再次入队并重复播报击杀通知。保留键可让 Vanished 命中 state==lastState 被去重吞掉；
+            // 重生时 Detected@Healthy 因 Healthy!=Died 仍会正常重新通知。
 
-            // ═══ 第4层：副本状态过滤 ═══
-            var isInDuty = _dutyMonitor.IsInDuty;
-
+            // 副本静音逻辑统一在 SendNotification 中按 Mute*InDuty 处理
             // 补齐名称/Rank
             var mobName = _dataManager.LookupHuntName(message.MobId);
             if (!string.IsNullOrEmpty(mobName) && message.MobId != mobName)
@@ -147,17 +165,27 @@ public class NotificationService : IDisposable
             // ═══ 第3层：重复消息过滤（状态机去重） ═══
             var state = DataManager.GetFateState(message.Progress);
             var trackKey = $"fate-{fateId}";
-            if (_trackedStates.TryGetValue(trackKey, out var lastState))
+            if (_trackedStates.TryGetValue(trackKey, out var last))
             {
-                if (state == lastState) { _log.Debug($"{Prefix} [去重] {trackKey} 状态未变 ({state})，跳过"); return; }
-                _trackedStates[trackKey] = state;
+                // 同状态：始终跳过（原始去重）
+                if (state == last.State) { _log.Debug($"{Prefix} [去重] {trackKey} 状态未变 ({state})，跳过"); return; }
+
+                // 非关键状态在冷却窗口内的变化：合并跳过（多源异步交错时防重复播报）
+                if (state != HuntState.Died &&
+                    (DateTime.UtcNow - last.NotifiedAt).TotalSeconds < NonCriticalCooldownSeconds)
+                {
+                    _log.Debug($"{Prefix} [去重] {trackKey} 冷却期内状态变化 ({last.State}→{state})，跳过");
+                    return;
+                }
+
+                _trackedStates[trackKey] = (state, DateTime.UtcNow);
             }
-            else { _trackedStates[trackKey] = state; }
-            if (state == HuntState.Died) _trackedStates.TryRemove(trackKey, out _);
+            else { _trackedStates[trackKey] = (state, DateTime.UtcNow); }
+            // 注意：Died 时不移除键，否则 HuntVanished(同样映射为 Died) 会在约 6 秒后
+            // 再次入队并重复播报击杀通知。保留键可让 Vanished 命中 state==lastState 被去重吞掉；
+            // 重生时 Detected@Healthy 因 Healthy!=Died 仍会正常重新通知。
 
-            // ═══ 第4层：副本状态过滤 ═══
-            var isInDuty = _dutyMonitor.IsInDuty;
-
+            // 副本静音逻辑统一在 SendNotification 中按 Mute*InDuty 处理
             // 补齐名称
             if (string.IsNullOrEmpty(message.FateName))
                 message.FateName = _dataManager.LookupFateName(message.FateId);
@@ -212,14 +240,13 @@ public class NotificationService : IDisposable
             }
         }
 
-        // TTS：副本内根据 MuteTtsInDuty 决定
+        // TTS：副本内根据 MuteTtsInDuty 决定（串行播放，避免设备争用导致静音）
         if (_config.Notification.TtsEnabled &&
             !(isInDuty && _config.Notification.MuteTtsInDuty) &&
             _config.Notification.TtsStates.TryGetValue(stateKey, out var ttsOk) && ttsOk)
         {
             var ttsText = fullText.Replace("★", "").Replace("●", "").Replace("○", "").Replace("→", ",");
-            _tts.Stop();
-            _ = Task.Run(() => _tts.SpeakAsync(ttsText));
+            _tts.SpeakAsync(ttsText);
         }
     }
 
