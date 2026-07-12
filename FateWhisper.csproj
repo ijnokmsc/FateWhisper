@@ -1,6 +1,8 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <DalamudLibPath>$(appdata)\XIVLauncherCN\addon\Hooks\dev\</DalamudLibPath>
+    <!-- 国服 XIVLauncherCN 的 Dalamud 安装路径；CI 中由 setup-dalamud 通过 DALAMUD_HOME 环境变量提供；本地回退到国服路径 -->
+    <DalamudLibPath Condition=" '$(DALAMUD_HOME)' == '' ">$(appdata)\XIVLauncherCN\addon\Hooks\dev\</DalamudLibPath>
+    <DalamudLibPath Condition=" '$(DALAMUD_HOME)' != '' ">$(DALAMUD_HOME)/</DalamudLibPath>
     <AssemblySearchPaths>$(AssemblySearchPaths);$(DalamudLibPath)</AssemblySearchPaths>
     <AssemblyName>FateWhisper</AssemblyName>
     <RootNamespace>FateWhisper</RootNamespace>
@@ -16,7 +18,7 @@
     <PackageReference Include="MQTTnet" Version="4.2.1" />
     <AdditionalFiles Include="data\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
-  <Target Name="DeployToDevPlugins" AfterTargets="Build">
+  <Target Name="DeployToDevPlugins" AfterTargets="Build" Condition=" '$(GITHUB_ACTIONS)' != 'true' ">
     <MakeDir Directories="$(appdata)\XIVLauncherCN\devPlugins\FateWhisper\" />
     <ItemGroup>
       <AllDlls Include="$(OutputPath)*.dll" />
