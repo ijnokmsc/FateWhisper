@@ -431,7 +431,7 @@ public class DataManager : IDisposable
             HuntState.Healthy => "健康",
             HuntState.Taunted => "已开怪",
             HuntState.Dying => "被暴打中",
-            HuntState.Died => "挂了",
+            HuntState.Died => "死亡",
             HuntState.Unknown => "",
             _ => "不见了"
         };

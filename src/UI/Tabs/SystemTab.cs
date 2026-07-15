@@ -94,6 +94,7 @@ public class SystemTab
         var pWorldId = _dutyMonitor.HomeWorldId > 0 ? _dutyMonitor.HomeWorldId : _config.WorldId;
         ImGui.Text($"  当前玩家: {pName}@{pWorld} (WorldID={pWorldId})");
         ImGui.Text($"  副本中={_dutyMonitor.IsInDuty} | 区域={_dutyMonitor.TerritoryType}");
+        ImGui.Text($"  本地检测={(_config.EnableLocalDetection ? "已启用" : "已禁用（纯 MQTT 接收）")}");
     }
 
     private void DrawCrossServerStatus()

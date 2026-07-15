@@ -22,7 +22,7 @@ internal sealed class PlayerContextManager : IDisposable
     private readonly MqttService _mqttService;
     private readonly NavigationService _navigationService;
     private readonly DutyMonitor _dutyMonitor;
-    private readonly MobScannerService _mobScannerService;
+    private readonly MobScannerService? _mobScannerService;
 
     private bool _mqttLoggedIn;
     private bool _disposed;
@@ -38,7 +38,7 @@ internal sealed class PlayerContextManager : IDisposable
         MqttService mqttService,
         NavigationService navigationService,
         DutyMonitor dutyMonitor,
-        MobScannerService mobScannerService)
+        MobScannerService? mobScannerService)
     {
         _log = log;
         _clientState = clientState;
@@ -160,7 +160,7 @@ internal sealed class PlayerContextManager : IDisposable
     /// </summary>
     private void OnZoneInit(ZoneInitEventArgs e)
     {
-        _mobScannerService.Reset();
+        _mobScannerService?.Reset();
 
         try
         {

@@ -45,6 +45,11 @@ public class DebugTab
         ImGui.TextDisabled("（开关状态持久保存）");
         ImGui.Spacing();
 
+        DrawLocalDetection();
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
         DrawSwitches();
         ImGui.Spacing();
         ImGui.Separator();
@@ -63,6 +68,29 @@ public class DebugTab
     }
 
     /// <summary>
+    /// 绘制本地检测开关与状态。
+    /// 关闭后插件仅接收 MQTT 推送（纯接收模式），不扫描对象表 / Hook 网络包，
+    /// 也不再向 MQTT 发布本地检测结果。修改需重载插件生效。
+    /// </summary>
+    private void DrawLocalDetection()
+    {
+        var enabled = _config.EnableLocalDetection;
+        ImGui.TextColored(
+            enabled
+                ? new System.Numerics.Vector4(0.3f, 1f, 0.3f, 1f)
+                : new System.Numerics.Vector4(0.7f, 0.7f, 0.7f, 1f),
+            enabled ? "本地检测：已启用" : "本地检测：已禁用（纯 MQTT 接收模式）");
+        ImGui.SameLine();
+        if (ImGui.Checkbox("启用本地检测（实验性）##local_detect", ref enabled))
+        {
+            _config.EnableLocalDetection = enabled;
+            _config.Save();
+            _log.Information($"[FateWhisper] 本地检测 = {enabled}（需重载插件生效）");
+        }
+        ImGui.TextDisabled("关闭后插件只接收远端推送，不主动检测本地猎怪 / FATE，也不发布本地结果。");
+    }
+
+    /// <summary>
     /// 绘制调试开关 checkbox。
     /// </summary>
     private void DrawSwitches()
@@ -78,9 +106,10 @@ public class DebugTab
             _log.Information($"[FateWhisper] 调试开关 MQTT消息 = {dbg.MqttMessages}");
         }
 
+        // 注意：以下两个开关是 MQTT 接收调试，与本地检测无关——纯 MQTT 接收模式下仍应可用。
         var huntTrig = dbg.HuntTriggers;
         if (DrawCheckbox("猎怪播报触发##dbg_hunt", ref huntTrig,
-            "开启后，猎怪播报触发时输出详细信息（ID/HP/地图/服务器）"))
+            "开启后，收到猎怪播报（含 MQTT 推送）时输出详细信息（ID/HP/地图/服务器）"))
         {
             dbg.HuntTriggers = huntTrig;
             _config.Save();
@@ -89,7 +118,7 @@ public class DebugTab
 
         var fateTrig = dbg.FateTriggers;
         if (DrawCheckbox("FATE 播报触发##dbg_fate", ref fateTrig,
-            "开启后，FATE 播报触发时输出详细信息（ID/进度/地图/服务器）"))
+            "开启后，收到 FATE 播报（含 MQTT 推送）时输出详细信息（ID/进度/地图/服务器）"))
         {
             dbg.FateTriggers = fateTrig;
             _config.Save();

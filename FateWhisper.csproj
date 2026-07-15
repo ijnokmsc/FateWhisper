@@ -6,7 +6,7 @@
     <AssemblySearchPaths>$(AssemblySearchPaths);$(DalamudLibPath)</AssemblySearchPaths>
     <AssemblyName>FateWhisper</AssemblyName>
     <RootNamespace>FateWhisper</RootNamespace>
-    <Version>0.3.2.0</Version>
+    <Version>0.3.3.0</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>

@@ -94,6 +94,15 @@ public class PluginConfig : IPluginConfiguration
     public int ActiveTab { get; set; } = 0;
 
     /// <summary>
+    /// 是否启用本地检测（扫描对象表 / Hook 网络包以检测猎怪与 FATE）。
+    /// 关闭后为纯 MQTT 接收模式：插件只接收远端推送，不主动检测本地事件，
+    /// 也不会把本地结果发布到 MQTT。
+    /// 默认关闭。修改后需重载插件生效。
+    /// </summary>
+    [JsonProperty("enable_local_detection")]
+    public bool EnableLocalDetection { get; set; } = false;
+
+    /// <summary>
     /// 调试开关配置。
     /// </summary>
     [JsonProperty("debug")]
@@ -254,6 +263,7 @@ public class PluginConfig : IPluginConfiguration
             MqttPassword = saved.MqttPassword;
             System.Diagnostics.Debug.WriteLine($"[FateWhisper] CopyFrom: 配置复制完成");
             ActiveTab = saved.ActiveTab;
+            EnableLocalDetection = saved.EnableLocalDetection;
             Debug = saved.Debug ?? new DebugConfig();
             CrossServer = saved.CrossServer ?? new CrossServerConfig();
         }

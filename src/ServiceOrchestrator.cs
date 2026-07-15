@@ -25,9 +25,9 @@ internal sealed class ServiceOrchestrator : IDisposable
     // 服务层
     private readonly DutyMonitor _dutyMonitor;
     private readonly MqttService _mqttService;
-    private readonly NetworkInterceptor _networkInterceptor;
+    private readonly NetworkInterceptor? _networkInterceptor;
     private readonly NotificationService _notificationService;
-    private readonly MobScannerService _mobScannerService;
+    private readonly MobScannerService? _mobScannerService;
     private readonly NavigationService _navigationService;
 
     // 上下文管理
@@ -42,7 +42,6 @@ internal sealed class ServiceOrchestrator : IDisposable
     private readonly PluginCommands _commands;
 
     // 事件委托引用（确保 Dispose 能正确注销）
-    private readonly Action _openMainUiHandler;
     private readonly Action _openConfigUiHandler;
     private readonly IFramework.OnUpdateDelegate _frameworkUpdateHandler;
 
@@ -88,11 +87,19 @@ internal sealed class ServiceOrchestrator : IDisposable
         _mqttService.UpdatePlayerDc(_dataManager.LookupDcLabel(_config.WorldId.ToString()));
 
         // ============================================================
-        // 第5步：网络拦截器
+        // 第5步：网络拦截器（本地检测，可配置关闭）
         // ============================================================
-        _networkInterceptor = new NetworkInterceptor(
-            pluginInterface, log, _dataManager, Plugin.InteropProvider,
-            _dutyMonitor.PlayerName, _config.WorldName, _config.Datacenter);
+        if (_config.EnableLocalDetection)
+        {
+            _networkInterceptor = new NetworkInterceptor(
+                pluginInterface, log, _dataManager, Plugin.InteropProvider,
+                _dutyMonitor.PlayerName, _config.WorldName, _config.Datacenter);
+        }
+        else
+        {
+            _networkInterceptor = null;
+            log.Information($"{Prefix} 本地检测（网络拦截）已禁用，纯 MQTT 接收模式");
+        }
 
         _dutyMonitor.PlayerName = _config.CharacterName;
 
@@ -104,11 +111,19 @@ internal sealed class ServiceOrchestrator : IDisposable
             _dataManager, _dutyMonitor, _config, _subsStore);
 
         // ============================================================
-        // 第7步：猎怪扫描服务
+        // 第7步：猎怪扫描服务（本地检测，可配置关闭）
         // ============================================================
-        _mobScannerService = new MobScannerService(
-            log, Plugin.ObjectTable, Plugin.ClientState, _dataManager,
-            Plugin.Framework, _config.WorldName ?? "", _config.Datacenter, _config.WorldId);
+        if (_config.EnableLocalDetection)
+        {
+            _mobScannerService = new MobScannerService(
+                log, Plugin.ObjectTable, Plugin.ClientState, _dataManager,
+                Plugin.Framework, _config.WorldName ?? "", _config.Datacenter, _config.WorldId);
+        }
+        else
+        {
+            _mobScannerService = null;
+            log.Information($"{Prefix} 本地检测（猎怪扫描）已禁用，纯 MQTT 接收模式");
+        }
 
         // ============================================================
         // 第8步：导航服务
@@ -149,8 +164,9 @@ internal sealed class ServiceOrchestrator : IDisposable
         _windowSystem.AddWindow(_navigationWindow);
 
         pluginInterface.UiBuilder.Draw += _windowSystem.Draw;
-        _openMainUiHandler = () => _mainWindow.IsOpen = true;
-        pluginInterface.UiBuilder.OpenMainUi += _openMainUiHandler;
+        // OpenMainUi 不再绑定强制打开——Dalamud 会在插件加载时自动触发该事件，
+        // 导致主窗口无视 config.WindowVisible=false 默认值而自动弹出。
+        // 用户通过 /fw 命令或插件列表手动打开。
         _openConfigUiHandler = () => _mainWindow.IsOpen = true;
         pluginInterface.UiBuilder.OpenConfigUi += _openConfigUiHandler;
 
@@ -165,7 +181,9 @@ internal sealed class ServiceOrchestrator : IDisposable
         _frameworkUpdateHandler = _ => _dutyMonitor.OnFrameworkUpdate();
         Plugin.Framework.Update += _frameworkUpdateHandler;
 
-        log.Information($"{Prefix} FateWhisper 插件初始化完成 v0.3.0.0 (基于 SilverDasher)");
+        var asmVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        var versionText = asmVersion is null ? "unknown" : $"{asmVersion.Major}.{asmVersion.Minor}.{asmVersion.Build}.{asmVersion.Revision}";
+        log.Information($"{Prefix} FateWhisper 插件初始化完成 v{versionText} (基于 SilverDasher)");
     }
 
     /// <summary>
@@ -182,16 +200,24 @@ internal sealed class ServiceOrchestrator : IDisposable
 
         // ============================================================
         // 事件连线 — MobScanner 猎怪扫描 → 通知 + MQTT 发布
+        // （仅本地检测启用时连线）
         // ============================================================
-        _mobScannerService.HuntDetected += OnHuntDetectedAndPublish;
-        _mobScannerService.HuntStatusChanged += OnHuntBroadcast;
-        _mobScannerService.HuntVanished += OnHuntBroadcast;
+        if (_mobScannerService is not null)
+        {
+            _mobScannerService.HuntDetected += OnHuntDetectedAndPublish;
+            _mobScannerService.HuntStatusChanged += OnHuntBroadcast;
+            _mobScannerService.HuntVanished += OnHuntBroadcast;
+        }
 
         // ============================================================
         // 事件连线 — 网络拦截本地检测 → 通知 + MQTT 发布
+        // （仅本地检测启用时连线）
         // ============================================================
-        _networkInterceptor.HuntDetected += OnHuntDetectedAndPublish;
-        _networkInterceptor.FateDetected += OnFateDetectedAndPublish;
+        if (_networkInterceptor is not null)
+        {
+            _networkInterceptor.HuntDetected += OnHuntDetectedAndPublish;
+            _networkInterceptor.FateDetected += OnFateDetectedAndPublish;
+        }
 
         // ============================================================
         // 启动 — 玩家上下文初始化（ClientState 事件订阅 + MQTT 连接）
@@ -294,7 +320,6 @@ internal sealed class ServiceOrchestrator : IDisposable
         try
         {
             Plugin.PluginInterface.UiBuilder.Draw -= _windowSystem.Draw;
-            Plugin.PluginInterface.UiBuilder.OpenMainUi -= _openMainUiHandler;
             Plugin.PluginInterface.UiBuilder.OpenConfigUi -= _openConfigUiHandler;
         }
         catch (Exception ex) { log.Error($"{Prefix} UI 注销异常: {ex.Message}"); }

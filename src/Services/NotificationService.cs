@@ -127,7 +127,7 @@ public class NotificationService : IDisposable
             var text = $"{crossTag}{rankColor}{stateTag}[{message.Rank}] {message.MobName} {PrefixSplit} {message.TerritoryName}({displayWorld})";
 
             SendNotification(_config.Notification.HuntPrefix, text, state);
-            _log.Information($"{Prefix} 猎怪: {text}");
+            _log.Information($"{Prefix} 猎怪: {text} [状态: {DataManager.GetStateName(state)}]");
 
             // 导航弹窗始终触发（不受副本限制）
             HuntNavigationPopupRequested?.Invoke(message);
@@ -200,7 +200,7 @@ public class NotificationService : IDisposable
             var text = $"{specialTag}{stateTag}FATE: {message.FateName} {PrefixSplit} {message.TerritoryName}({displayWorld})";
 
             SendNotification(_config.Notification.FatePrefix, text, state);
-            _log.Information($"{Prefix} {text}");
+            _log.Information($"{Prefix} {text} [状态: {DataManager.GetStateName(state)}]");
 
             // 导航弹窗始终触发（不受副本限制）
             FateNavigationPopupRequested?.Invoke(message);

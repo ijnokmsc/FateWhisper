@@ -25,7 +25,9 @@ namespace FateWhisper.Services;
 ///     3. 在 ProcessGameNetworkPacket 中取消 NpcSpawn 分支注释
 ///     4. 维护 _actorNpcMap 字典跟踪 actorId → mobId 映射
 ///     5. 在 ActorDespawn 处理中调用 HuntDetected 事件
-///   在此期间，FATE 检测（FateStart/FateEnd/FateProgress/InitZone）完全可用。
+///   注意：本地 FATE 检测依赖本服务的网络包 Hook（ProcessZonePacketDown）。当 Hook 因客户端
+///   版本签名不匹配而失效时，本地检测不可用，仅能依赖远端 MQTT 推送。猎怪网络检测因 NpcSpawn
+///   opcode 未确认，当前由 MobScanner 对象表扫描承担。
 /// </summary>
 public class NetworkInterceptor : IDisposable
 {
@@ -139,10 +141,9 @@ public class NetworkInterceptor : IDisposable
             }
         }
 
-        // 所有已知签名均未匹配 — 这不影响 FATE 检测（可手动调用 ProcessGameNetworkPacket）
-        _log.Warning($"{Prefix} 所有已知网络包 Hook 签名均未匹配当前客户端版本。" +
-            "FATE 检测功能可通过手动调用 ProcessGameNetworkPacket 使用。" +
-            "请使用 Dalamud 数据浏览器确认 CN 版 ProcessZonePacketDown 签名后更新。");
+        // 所有已知签名均未匹配 — 本地网络包检测（FATE/猎怪）当前不可用，仅远端 MQTT 推送有效
+        _log.Warning($"{Prefix} 所有已知网络包 Hook 签名均未匹配当前客户端版本，本地 FATE/猎怪网络检测已禁用。" +
+            "当前仅能通过远端 MQTT 接收推送。如需恢复本地检测，请用 Dalamud 数据浏览器确认 CN 版 ProcessZonePacketDown 签名并加入 knownSignatures。");
     }
 
     /// <summary>
@@ -179,10 +180,6 @@ public class NetworkInterceptor : IDisposable
             var fateInfo = _dataManager.GetOpcode("FateInfo");
             var actorControl = _dataManager.GetOpcode("ActorControlSelf");
 
-            // TODO: 取消注释以下行，待 NpcSpawn opcode 从实机抓包确认后填入 opcodes.json
-            // var npcSpawn = _dataManager.GetOpcode("NpcSpawn");
-            // var actorCreate = _dataManager.GetOpcode("ActorCreate");
-
             if (initZone is not null && opcode == initZone.OpcodeValue)
             {
                 ProcessInitZonePacket(dataPtr, initZone.Cnl);
@@ -195,15 +192,6 @@ public class NetworkInterceptor : IDisposable
             {
                 ProcessActorControlPacket(dataPtr, actorControl.Cnl);
             }
-            // TODO: 取消注释以下分支，待 opcodes.json 中确认 NpcSpawn/ActorCreate opcode
-            // else if (npcSpawn is not null && opcode == npcSpawn.OpcodeValue)
-            // {
-            //     ProcessNpcSpawnPacket(dataPtr, npcSpawn.Cnl);
-            // }
-            // else if (actorCreate is not null && opcode == actorCreate.OpcodeValue)
-            // {
-            //     ProcessActorCreatePacket(dataPtr, actorCreate.Cnl);
-            // }
         }
         catch (Exception ex)
         {

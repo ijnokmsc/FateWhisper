@@ -92,7 +92,10 @@ public class MainWindow : Window, IDisposable
         _navTestTab = new NavigationTestTab(_navigationService, _config, _navigationWindow, _objectTable);
         _debugTab = new DebugTab(config, log, _mqttService, _navigationService, notificationService);
 
-        IsOpen = config.WindowVisible;
+        // 启动时不根据持久化配置自动打开主窗口：用户明确要求插件加载后主窗口保持关闭，
+        // 只能通过 /fw 命令或插件「设置」按钮手动打开。若磁盘配置残留 WindowVisible=true，
+        // 这里直接忽略，避免每次加载都弹出。
+        IsOpen = false;
         _activeTab = Math.Clamp(config.ActiveTab, 0, 6);
         _log.Information($"{Prefix} 主窗口已初始化");
     }
@@ -237,7 +240,9 @@ public class MainWindow : Window, IDisposable
             }
 
             ImGui.PushID(i);
-            ImGui.TextColored(color, $"[{entry.Time:HH:mm:ss}] {entry.Message}");
+            var stateLabel = GetLogStateLabel(entry);
+            var displayText = string.IsNullOrEmpty(stateLabel) ? entry.Message : $"{entry.Message} [状态: {stateLabel}]";
+            ImGui.TextColored(color, $"[{entry.Time:HH:mm:ss}] {displayText}");
 
             // 双击检测
             if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left) && entry.HasNavigationTarget)
@@ -272,6 +277,22 @@ public class MainWindow : Window, IDisposable
             while (_notificationLog.Count > MaxLogEntries)
                 _notificationLog.RemoveAt(0);
         }
+    }
+
+    /// <summary>
+    /// 根据日志条目携带的猎怪 / FATE 消息推算中文状态名
+    /// （健康 / 已开怪 / 被暴打中 / 死亡）。无导航目标（普通信息）返回空串。
+    /// </summary>
+    private static string GetLogStateLabel(LogEntry entry)
+    {
+        HuntState state;
+        if (entry.HuntMessage is not null)
+            state = DataManager.GetHuntState(entry.HuntMessage.Health);
+        else if (entry.FateMessage is not null)
+            state = DataManager.GetFateState(entry.FateMessage.Progress);
+        else
+            return "";
+        return DataManager.GetStateName(state);
     }
 
     /// <summary>

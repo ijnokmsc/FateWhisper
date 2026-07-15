@@ -85,7 +85,7 @@ public class NavigationWindow : Window, IDisposable
 
         IsOpen = true;
         BringToFront();
-        _log.Information($"{Prefix} 导航弹窗已显示 (Hunt: {msg.MobName})");
+        _log.Information($"{Prefix} 导航弹窗已显示 (Hunt: {msg.MobName}) [状态: {DataManager.GetStateName(DataManager.GetHuntState(msg.Health))}]");
     }
 
     /// <summary>
@@ -116,7 +116,7 @@ public class NavigationWindow : Window, IDisposable
 
         IsOpen = true;
         BringToFront();
-        _log.Information($"{Prefix} 导航弹窗已显示 (FATE: {msg.FateName})");
+        _log.Information($"{Prefix} 导航弹窗已显示 (FATE: {msg.FateName}) [状态: {DataManager.GetStateName(DataManager.GetFateState(msg.Progress))}]");
     }
 
     /// <summary>
@@ -197,6 +197,13 @@ public class NavigationWindow : Window, IDisposable
             var t = _testTarget.Value;
             ImGui.TextWrapped($"目标: {t.Name}");
             ImGui.TextDisabled($"位置: territory={t.TerritoryId} ({t.X:F1}, {t.Y:F1}, {t.Z:F1})  [{t.World}]");
+        }
+
+        // ---- 目标状态（健康 / 已开怪 / 被暴打中 / 死亡） ----
+        var stateName = GetCurrentStateName(out var stateColor);
+        if (stateName is not null)
+        {
+            ImGui.TextColored(stateColor, $"状态: {stateName}");
         }
 
         ImGui.Spacing();
@@ -351,6 +358,32 @@ public class NavigationWindow : Window, IDisposable
             "B" => "○ ",
             _ => ""
         };
+    }
+
+    /// <summary>
+    /// 从当前猎怪 / FATE 目标实时推算状态名与配色。
+    /// 猎怪按 HP、FATE 按进度映射到 健康 / 已开怪 / 被暴打中 / 死亡。
+    /// </summary>
+    private string? GetCurrentStateName(out Vector4 color)
+    {
+        color = new Vector4(0.7f, 0.7f, 0.7f, 1.0f);
+        HuntState? state = null;
+        if (_huntTarget is not null)
+            state = DataManager.GetHuntState(_huntTarget.Health);
+        else if (_fateTarget is not null)
+            state = DataManager.GetFateState(_fateTarget.Progress);
+
+        if (state is null) return null;
+
+        color = state.Value switch
+        {
+            HuntState.Healthy => new Vector4(0.3f, 1.0f, 0.3f, 1.0f), // 绿
+            HuntState.Taunted => new Vector4(1.0f, 0.9f, 0.2f, 1.0f), // 黄
+            HuntState.Dying   => new Vector4(1.0f, 0.6f, 0.2f, 1.0f), // 橙
+            HuntState.Died    => new Vector4(1.0f, 0.3f, 0.3f, 1.0f), // 红
+            _ => color
+        };
+        return DataManager.GetStateName(state.Value);
     }
 
     public void Dispose()
