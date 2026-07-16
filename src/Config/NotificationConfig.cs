@@ -53,7 +53,7 @@ public class NotificationConfig
         ["died"] = true,
     };
 
-    /// <summary>各状态是否显示 Toast</summary>
+    /// <summary>各状态是否触发通知（聊天框、导航弹窗、调试 Tab 播报日志均遵循此开关）</summary>
     [JsonProperty("toast_states")]
     public Dictionary<string, bool> ToastStates { get; set; } = new()
     {

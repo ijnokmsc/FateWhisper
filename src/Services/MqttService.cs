@@ -366,7 +366,8 @@ public class MqttService : IDisposable
                     MobName = _dataManager.LookupHuntName(msgIdStr),
                 };
 
-                if (_config.Debug.HuntTriggers)
+                if (_config.Debug.HuntTriggers &&
+                    _config.Notification.ToastStates.TryGetValue(NotificationService.GetStateKey(DataManager.GetHuntState(hp)), out var huntOk) && huntOk)
                     _log.Information($"{Prefix} 猎怪播报触发: id={msgId} hp={hp}% map={map} ({territoryName}) world={worldName} dc={dcLabel} crossDc={isCrossDc}");
                 HuntReceived?.Invoke(huntMsg);
             }
@@ -391,7 +392,8 @@ public class MqttService : IDisposable
                     EventType = progress >= 100 ? "end" : (progress == 0 ? "start" : "progress"),
                 };
 
-                if (_config.Debug.FateTriggers)
+                if (_config.Debug.FateTriggers &&
+                    _config.Notification.ToastStates.TryGetValue(NotificationService.GetStateKey(DataManager.GetFateState(progress)), out var fateOk) && fateOk)
                     _log.Information($"{Prefix} FATE 播报触发: id={msgId} progress={progress}% map={map} ({territoryName}) world={worldName} dc={dcLabel} crossDc={isCrossDc} special={fateMsg.IsSpecial}");
                 FateReceived?.Invoke(fateMsg);
             }

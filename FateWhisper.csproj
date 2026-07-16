@@ -6,12 +6,12 @@
     <AssemblySearchPaths>$(AssemblySearchPaths);$(DalamudLibPath)</AssemblySearchPaths>
     <AssemblyName>FateWhisper</AssemblyName>
     <RootNamespace>FateWhisper</RootNamespace>
-    <Version>0.3.3.0</Version>
+    <Version>0.3.4.0</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
     <Description>FateWhisper — FF14 跨服猎怪+FATE播报插件，基于 SilverDasher 移植。</Description>
-    <PackageProjectUrl>https://github.com/FateWhisper/FateWhisper</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/ijnokmsc/FateWhisper</PackageProjectUrl>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Edge_tts_sharp" Version="1.1.7" />

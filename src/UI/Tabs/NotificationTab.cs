@@ -84,7 +84,7 @@ public class NotificationTab
         ImGui.SetColumnWidth(2, 60);
         ImGui.Text("状态"); ImGui.NextColumn();
         ImGui.Text("TTS"); ImGui.NextColumn();
-        ImGui.Text("Toast"); ImGui.NextColumn();
+        ImGui.Text("通知"); ImGui.NextColumn();
         ImGui.Separator();
 
         foreach (var (key, label) in StateLabels)
@@ -151,7 +151,7 @@ public class NotificationTab
         if (ImGui.Checkbox("副本内不显示通知", ref muteNotif))
         { _config.Notification.MuteNotificationInDuty = muteNotif; _config.Save(); }
 
-        ImGui.TextDisabled("导航弹窗始终可用（不受上述选项影响）");
+        ImGui.TextDisabled("聊天框、导航面板均遵循「通知」逐状态开关（不受副本限制）");
 
         ImGui.Spacing();
 

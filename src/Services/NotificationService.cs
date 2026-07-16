@@ -129,9 +129,12 @@ public class NotificationService : IDisposable
             SendNotification(_config.Notification.HuntPrefix, text, state);
             _log.Information($"{Prefix} 猎怪: {text} [状态: {DataManager.GetStateName(state)}]");
 
-            // 导航弹窗始终触发（不受副本限制）
-            HuntNavigationPopupRequested?.Invoke(message);
-            _onNavLog?.Invoke(text, message, null);
+            // 导航弹窗遵循 Toast 逐状态开关（仍不受副本限制）
+            if (_config.Notification.ToastStates.TryGetValue(GetStateKey(state), out var navOk) && navOk)
+            {
+                HuntNavigationPopupRequested?.Invoke(message);
+                _onNavLog?.Invoke(text, message, null);
+            }
         }
         catch (Exception ex)
         {
@@ -202,9 +205,12 @@ public class NotificationService : IDisposable
             SendNotification(_config.Notification.FatePrefix, text, state);
             _log.Information($"{Prefix} {text} [状态: {DataManager.GetStateName(state)}]");
 
-            // 导航弹窗始终触发（不受副本限制）
-            FateNavigationPopupRequested?.Invoke(message);
-            _onNavLog?.Invoke(text, null, message);
+            // 导航弹窗遵循 Toast 逐状态开关（仍不受副本限制）
+            if (_config.Notification.ToastStates.TryGetValue(GetStateKey(state), out var navOk) && navOk)
+            {
+                FateNavigationPopupRequested?.Invoke(message);
+                _onNavLog?.Invoke(text, null, message);
+            }
         }
         catch (Exception ex)
         {
@@ -218,9 +224,10 @@ public class NotificationService : IDisposable
         var stateKey = GetStateKey(state);
         var isInDuty = _dutyMonitor.IsInDuty;
 
-        // ChatLog：副本内根据 MuteNotificationInDuty 决定
+        // ChatLog：遵循 Toast 逐状态开关（副本内根据 MuteNotificationInDuty 决定）
         if (_config.Notification.ChatLogEnabled &&
-            !(isInDuty && _config.Notification.MuteNotificationInDuty))
+            !(isInDuty && _config.Notification.MuteNotificationInDuty) &&
+            _config.Notification.ToastStates.TryGetValue(stateKey, out var chatOk) && chatOk)
         {
             try { _chatGui.Print(fullText); }
             catch (Exception ex) { _log.Warning($"{Prefix} ChatLog 失败: {ex.Message}"); }
@@ -266,7 +273,7 @@ public class NotificationService : IDisposable
         await _tts.SpeakAsync($"{_config.Notification.HuntPrefix} {text}");
     }
 
-    private static string GetStateKey(HuntState state) => state switch
+    public static string GetStateKey(HuntState state) => state switch
     {
         HuntState.Healthy => "healthy",
         HuntState.Taunted => "taunted",
